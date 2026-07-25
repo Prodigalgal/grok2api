@@ -187,17 +187,20 @@ export class AutomationTaskRepository {
     return Number(result.changes);
   }
 
-  claimNext(owner: string, leaseMs: number, now = Date.now()): AutomationTask | null {
+  claimNext(owner: string, leaseMs: number, now = Date.now(), kinds: readonly string[] = []): AutomationTask | null {
     if (!owner.trim() || leaseMs <= 0) {
       throw new Error("task owner and positive lease duration are required");
     }
     this.recoverExpired(now);
+    const allowedKinds = kinds.map((kind) => kind.trim()).filter(Boolean);
+    const kindFilter = allowedKinds.length ? `AND kind IN (${allowedKinds.map(() => "?").join(", ")})` : "";
     const candidate = this.db.prepare(`
       SELECT id FROM automation_tasks
       WHERE status = 'queued'
+      ${kindFilter}
       ORDER BY CASE WHEN kind = 'registration' THEN 0 ELSE 1 END, created_at, id
       LIMIT 1
-    `).get() as { id: string } | undefined;
+    `).get(...allowedKinds) as { id: string } | undefined;
     if (!candidate) {
       return null;
     }

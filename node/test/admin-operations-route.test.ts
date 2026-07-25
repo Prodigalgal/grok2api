@@ -16,6 +16,9 @@ test("Node admin operations persist settings and expose import, export, logs, us
   let maintenanceRuns = 0;
   const server = createApiServer({
     adminStore: store,
+    automationTasks: store.automationTasks(),
+    registrationDefaults: { mailBaseUrl: "https://mail.example.test", mailDomain: "mail.example.test", maxConcurrency: 3 },
+    reauthConcurrency: 4,
     adminUsername: "admin",
     adminPassword: "secret",
     maintainer: { async runOnce(force) { assert.equal(force, true); maintenanceRuns++; return { attempted: 0, refreshed: 0, failed: 0, permanentFailures: 0, ssoTasksQueued: 0 }; } },
@@ -45,6 +48,16 @@ test("Node admin operations persist settings and expose import, export, logs, us
     const maintenanceText = await maintenance.text();
     assert.equal(maintenance.status, 200, maintenanceText);
     assert.equal(maintenanceRuns, 1);
+
+    const registration = await call("/admin/api/accounts/register", { method: "POST", body: JSON.stringify({ count: 12, concurrency: 3 }) });
+    assert.equal(registration.status, 202);
+    const registrationBody = await registration.json() as { count: number; concurrency: number; tasks: Array<{ batch: { count: number; concurrency: number } }> };
+    assert.equal(registrationBody.count, 12);
+    assert.equal(registrationBody.concurrency, 3);
+    assert.equal(registrationBody.tasks.length, 1);
+    assert.deepEqual(registrationBody.tasks[0]?.batch, { count: 12, concurrency: 3 });
+    assert.equal(store.automationTasks().listByStatus("queued", "registration").length, 1);
+    assert.equal((await call("/admin/api/accounts/register", { method: "POST", body: JSON.stringify({ count: 12, concurrency: 4 }) })).status, 400);
   } finally {
     await server.close();
     store.close();

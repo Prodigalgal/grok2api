@@ -161,3 +161,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .registration-log-line.error span, .registration-log-line.error strong { color: #f1a2a2; }
 .registration-history .table-wrap { max-height: 380px; overflow: auto; }
 .registration-history small { color: #849087; font-family: ui-monospace, Consolas, monospace; }
+.reauth-failures { display: grid; gap: 7px; margin-top: 14px; padding-top: 12px; border-top: 1px solid #e4e9e6; }
+.reauth-failures h3 { margin: 0 0 2px; color: #6c7971; font-size: 12px; font-weight: 500; }
+.reauth-failure { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; color: #7b4b4b; font-size: 12px; }
+.reauth-failure span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

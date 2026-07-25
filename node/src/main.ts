@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import { DeviceLoginService } from "./auth/device-login-service.js";
 import { SsoReauthService } from "./auth/sso-reauth-service.js";
 import { PlaywrightBrowserTaskRunner } from "./automation/browser-task-runner.js";
-import { AutomationTaskWorker } from "./automation/task-worker.js";
+import { AutomationTaskWorker, AutomationTaskWorkerPool } from "./automation/task-worker.js";
 import { loadConfig } from "./config.js";
 import { ChatService } from "./chat/service.js";
 import { createApiServer } from "./http/health-server.js";
@@ -60,14 +60,27 @@ const emailLoginRunner = config.cfMailBaseUrl && config.cfMailAdminPassword
     timeoutMs: config.registrationTimeoutMs,
   }) : null)
   : null;
-const taskWorker = new AutomationTaskWorker({
+const registrationWorker = new AutomationTaskWorker({
   store,
   ssoReauth,
   browserRunner,
   registrationRunner,
   emailLoginRunner,
   config,
+  owner: `node-registration-${process.pid}`,
+  kinds: ["registration"],
 });
+const reauthWorkers = Array.from({ length: config.reauthWorkers }, (_unused, index) => new AutomationTaskWorker({
+  store,
+  ssoReauth,
+  browserRunner,
+  registrationRunner,
+  emailLoginRunner,
+  config,
+  owner: `node-reauth-${process.pid}-${index + 1}`,
+  kinds: ["sso_reauth", "sso_email_reauth", "browser_automation"],
+}));
+const taskWorkers = new AutomationTaskWorkerPool([registrationWorker, ...reauthWorkers]);
 const server = createApiServer({
   modelStore: store,
   apiKeyStore: store,
@@ -75,12 +88,14 @@ const server = createApiServer({
   apiKeyAuth: { legacyApiKey: config.legacyApiKey, requireApiKey: config.requireApiKey },
   chatService: new ChatService(store, config.upstreamBase, runtimeDefaultModel, runtimePoolMode, usageRecorder),
   automationTasks: store.automationTasks(),
-  automationWorker: taskWorker,
+  automationWorker: taskWorkers,
   registrationAvailable: config.automationWorkerEnabled && registrationRunner !== null,
   registrationDefaults: {
     mailBaseUrl: config.cfMailBaseUrl,
     mailDomain: config.cfMailDomain,
+    maxConcurrency: config.registrationMaxConcurrency,
   },
+  reauthConcurrency: config.reauthWorkers,
   adminStore: store,
   adminUsername: config.adminUsername,
   adminPassword: config.adminPassword,
@@ -95,7 +110,7 @@ async function stop(exitCode: number): Promise<void> {
   stopping = true;
   try {
     maintainer.stop();
-    taskWorker.stop();
+    taskWorkers.stop();
     usageRecorder.stop();
     await server.close();
   } finally {
@@ -113,7 +128,7 @@ if (config.tokenMaintainerEnabled) {
   maintainer.start();
 }
 if (config.automationWorkerEnabled) {
-  taskWorker.start();
+  taskWorkers.start();
 }
 usageRecorder.start();
 console.info(JSON.stringify({

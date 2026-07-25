@@ -75,8 +75,8 @@
           <div id="registration-notice" class="registration-notice" hidden></div>
           <div class="registration-workspace">
             <section class="registration-settings">
-              <div class="section-heading"><div><h2>注册设置</h2><p>任务按顺序执行，提交后可离开页面。</p></div><span id="registration-availability" class="status warn">检查中</span></div>
-              <div class="form-grid registration-form"><label>注册数量<input id="registration-count" type="number" min="1" max="20" value="1"></label><label>执行方式<input value="串行（1 个 Worker）" disabled></label><label>邮箱域名<input id="registration-domain" readonly></label><label>网络出口<input value="节点直连" readonly></label></div>
+              <div class="section-heading"><div><h2>注册设置</h2><p>独立批次 Worker 按并发槽逐步生成任务。</p></div><span id="registration-availability" class="status warn">检查中</span></div>
+              <div class="form-grid registration-form"><label>注册总数<input id="registration-count" type="number" min="1" max="100" value="1"></label><label>并发数<input id="registration-concurrency" type="number" min="1" max="3" value="1"></label><label>邮箱域名<input id="registration-domain" readonly></label><label>网络出口<input value="节点直连" readonly></label></div>
             </section>
             <section class="registration-live">
               <div class="section-heading"><div><h2>当前批次</h2><p id="registration-batch-meta">尚未启动批次</p></div><span id="registration-batch-status" class="status">空闲</span></div>
@@ -95,7 +95,7 @@
         <section data-panel="keepalive" class="panel">
           <div class="workbench-head"><div><h1>账号保活</h1><p>自动刷新有效凭据；失效账号进入重授权队列，明确封禁后才停止。</p></div><div class="toolbar"><button id="keepalive-run" type="button" class="quiet">立即扫描</button><button id="keepalive-enable-all" type="button">全部启用并重授权</button></div></div>
           <div id="keepalive-metrics" class="metrics"></div>
-          <div class="split-grid"><section class="tool-surface"><h2>运行策略</h2><div class="summary-list"><div><span>自动保活</span><strong>运行中</strong></div><div><span>邮箱取信</span><strong>实时恢复</strong></div><div><span>停止条件</span><strong>明确封禁</strong></div></div></section><section class="tool-surface"><h2>重授权队列</h2><div id="reauth-summary" class="summary-list"></div></section></div>
+          <div class="split-grid"><section class="tool-surface"><h2>运行策略</h2><div class="summary-list"><div><span>自动保活</span><strong>运行中</strong></div><div><span>邮箱取信</span><strong>实时恢复</strong></div><div><span>停止条件</span><strong>明确封禁</strong></div></div></section><section class="tool-surface"><h2>重授权队列</h2><div id="reauth-summary" class="summary-list"></div><div id="reauth-failures" class="reauth-failures"></div></section></div>
         </section>
 
         <section data-panel="models" class="panel">
@@ -133,6 +133,6 @@
       </form>
     </dialog>
     <dialog id="secret-dialog"><form method="dialog"><header><h2>新 API Key</h2><button type="submit" class="quiet">关闭</button></header><code id="issued-secret"></code><footer><button id="copy-secret" type="button">复制</button></footer></form></dialog>
-    <script type="module" src="/admin/app.js?v=20260725"></script>
+    <script type="module" src="/admin/app.js?v=20260725b"></script>
   </body>
 </html>

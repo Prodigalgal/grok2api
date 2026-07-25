@@ -18,7 +18,7 @@ export interface BrowserTaskRuntime {
   readonly waitForMailCode?: () => Promise<string>;
   readonly proxyServer?: string;
   readonly signal?: AbortSignal;
-  readonly onEvent?: (event: { readonly type: string; readonly message: string }) => void;
+  readonly onEvent?: (event: { readonly type: string; readonly message: string; readonly detail?: Readonly<Record<string, unknown>> }) => void;
 }
 
 type BrowserAction =

@@ -22,4 +22,8 @@ test("Node runtime requires an explicit direct xAI upstream and uses only Cloudf
 test("automation worker is enabled by default and can be disabled for a shadow runtime", () => {
   assert.equal(loadConfig({}).automationWorkerEnabled, true);
   assert.equal(loadConfig({ GROK2API_AUTOMATION_WORKER: "0" }).automationWorkerEnabled, false);
+  assert.equal(loadConfig({}).reauthWorkers, 4);
+  assert.equal(loadConfig({ GROK2API_REAUTH_WORKERS: "6" }).reauthWorkers, 6);
+  assert.equal(loadConfig({}).registrationMaxConcurrency, 3);
+  assert.equal(loadConfig({ GROK2API_REGISTRATION_MAX_CONCURRENCY: "5" }).registrationMaxConcurrency, 5);
 });

@@ -14,7 +14,7 @@ function createStore(): { readonly store: SqliteStore; readonly dir: string } {
   return { store, dir };
 }
 
-test("failed SSO task automatically queues email reauthorization without waiting for input", async () => {
+test("failed saved SSO recovery succeeds after queuing independent email reauthorization", async () => {
   const { store, dir } = createStore();
   try {
     store.saveAccount({
@@ -35,8 +35,8 @@ test("failed SSO task automatically queues email reauthorization without waiting
 
     await worker.runOnce();
     const failed = store.automationTasks().get(task.id);
-    assert.equal(failed?.status, "failed");
-    assert.match(failed?.error ?? "", /automatic email login queued/);
+    assert.equal(failed?.status, "succeeded");
+    assert.equal(failed?.result?.recoveredBy, "email_queued");
     const queued = store.automationTasks().listByStatus("queued", "sso_email_reauth");
     assert.equal(queued.length, 1);
     assert.equal(queued[0]?.request.accountId, "account-sso-recover");

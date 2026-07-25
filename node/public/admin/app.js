@@ -114,12 +114,15 @@ async function loadTasks() {
   const [data, availability] = await Promise.all([api("/admin/api/automation/tasks?limit=100"), api("/admin/api/accounts/register/availability")]);
   const tasks = data.tasks.filter((task) => task.kind === "registration");
   $("#registration-domain").value = availability.defaults?.mail_domain || "未配置";
+  const maxConcurrency = Number(availability.defaults?.max_concurrency || 1);
+  $("#registration-concurrency").max = String(maxConcurrency);
   state.registrationAvailable = Boolean(availability.ok);
   $("#registration-availability").className = `status ${availability.ok ? "good" : "bad"}`;
   $("#registration-availability").textContent = availability.ok ? "注册服务可用" : "注册服务未配置";
   $("#registration-start").disabled = !state.registrationAvailable;
   if (!$("#registration-count").dataset.ready) {
     $("#registration-count").value = localStorage.getItem("grok2api-registration-count") || "1";
+    $("#registration-concurrency").value = localStorage.getItem("grok2api-registration-concurrency") || "1";
     $("#registration-count").dataset.ready = "true";
   }
 
@@ -129,13 +132,18 @@ async function loadTasks() {
     const active = tasks.filter((task) => ["queued", "leased", "running"].includes(task.status));
     if (active.length) {
       batchTasks = active;
-      state.registrationBatch = { ids: active.map((task) => task.id), startedAt: Math.min(...active.map((task) => task.createdAt)) };
+      state.registrationBatch = {
+        ids: active.map((task) => task.id),
+        startedAt: Math.min(...active.map((task) => task.createdAt)),
+        targetCount: active.reduce((total, task) => total + Number(task.batch?.count || 1), 0),
+        concurrency: Number(active[0]?.batch?.concurrency || 1),
+      };
       localStorage.setItem("grok2api-registration-batch", JSON.stringify(state.registrationBatch));
     }
   }
   await renderRegistrationBatch(batchTasks);
 
-  $("#tasks-body").innerHTML = tasks.map((task, index) => `<tr><td><strong>#${tasks.length - index}</strong><br><small>${escapeHtml(task.id.slice(0, 8))}</small></td><td>${registrationStatus(task.status)}</td><td>${task.attempts}</td><td>${date(task.createdAt)}</td><td>${date(task.updatedAt)}</td><td><div class="row-actions"><button type="button" class="quiet" data-task-detail="${escapeHtml(task.id)}">日志</button>${["queued", "running"].includes(task.status) ? `<button type="button" class="danger" data-task-cancel="${escapeHtml(task.id)}">停止</button>` : ""}</div></td></tr>`).join("") || `<tr><td colspan="6">暂无注册任务</td></tr>`;
+  $("#tasks-body").innerHTML = tasks.map((task, index) => `<tr><td><strong>#${tasks.length - index}</strong><br><small>${escapeHtml(task.id.slice(0, 8))} · ${escapeHtml(task.batch?.count || 1)} 个 / 并发 ${escapeHtml(task.batch?.concurrency || 1)}</small></td><td>${registrationStatus(task.status)}</td><td>${task.attempts}</td><td>${date(task.createdAt)}</td><td>${date(task.updatedAt)}</td><td><div class="row-actions"><button type="button" class="quiet" data-task-detail="${escapeHtml(task.id)}">日志</button>${["queued", "running"].includes(task.status) ? `<button type="button" class="danger" data-task-cancel="${escapeHtml(task.id)}">停止</button>` : ""}</div></td></tr>`).join("") || `<tr><td colspan="6">暂无注册任务</td></tr>`;
   $$('[data-task-cancel]').forEach((button) => button.addEventListener("click", async () => { await api(`/admin/api/automation/tasks/${encodeURIComponent(button.dataset.taskCancel)}/cancel`, { method: "POST" }); await loadTasks(); }));
   $$('[data-task-detail]').forEach((button) => button.addEventListener("click", () => void showTaskDetail(button.dataset.taskDetail)));
   scheduleRegistrationRefresh(batchTasks.some((task) => ["queued", "leased", "running"].includes(task.status)) ? 2000 : 5000);
@@ -160,16 +168,8 @@ function registrationStatus(value) {
 
 async function renderRegistrationBatch(tasks) {
   const labels = { queued: "排队中", leased: "正在领取", running: "注册中", succeeded: "已完成", failed: "失败", cancelled: "已停止" };
-  const counts = { queued: 0, running: 0, succeeded: 0, failed: 0 };
-  for (const task of tasks) {
-    if (task.status === "queued") counts.queued++;
-    else if (["leased", "running"].includes(task.status)) counts.running++;
-    else if (task.status === "succeeded") counts.succeeded++;
-    else if (["failed", "cancelled"].includes(task.status)) counts.failed++;
-  }
-  $("#registration-metrics").innerHTML = [["总任务", tasks.length], ["等待", counts.queued], ["执行中", counts.running], ["成功", counts.succeeded], ["失败/停止", counts.failed]].map(([name, value]) => `<div><span>${name}</span><strong>${value}</strong></div>`).join("");
-
   if (!tasks.length) {
+    $("#registration-metrics").innerHTML = [["总任务", 0], ["等待", 0], ["执行中", 0], ["成功", 0], ["失败/停止", 0]].map(([name, value]) => `<div><span>${name}</span><strong>${value}</strong></div>`).join("");
     $("#registration-batch-meta").textContent = "尚未启动批次";
     $("#registration-batch-status").textContent = "空闲";
     $("#registration-batch-status").className = "status";
@@ -182,20 +182,29 @@ async function renderRegistrationBatch(tasks) {
   }
 
   const startedAt = state.registrationBatch?.startedAt || Math.min(...tasks.map((task) => task.createdAt));
-  const terminal = counts.succeeded + counts.failed;
   const active = tasks.find((task) => ["leased", "running"].includes(task.status)) || tasks.find((task) => task.status === "queued") || tasks.at(-1);
   const details = active ? await api(`/admin/api/automation/tasks/${encodeURIComponent(active.id)}`).catch(() => ({ events: [] })) : { events: [] };
   const events = details.events || [];
   const latest = events.at(-1);
-  const allDone = terminal === tasks.length;
+  const progressEvent = [...events].reverse().find((event) => Number.isFinite(Number(event.detail?.targetCount)));
+  const result = active?.result || {};
+  const targetCount = Number(progressEvent?.detail?.targetCount || result.targetCount || state.registrationBatch?.targetCount || tasks.reduce((total, task) => total + Number(task.batch?.count || 1), 0));
+  const concurrency = Number(progressEvent?.detail?.concurrency || result.concurrency || state.registrationBatch?.concurrency || active?.batch?.concurrency || 1);
+  const legacyBatch = tasks.length > 1;
+  const successCount = Number(progressEvent?.detail?.successCount ?? result.successCount ?? (legacyBatch ? tasks.filter((task) => task.status === "succeeded").length : active?.status === "succeeded" ? targetCount : 0));
+  const failedCount = Number(progressEvent?.detail?.failedCount ?? result.failedCount ?? (legacyBatch ? tasks.filter((task) => ["failed", "cancelled"].includes(task.status)).length : active?.status === "failed" ? targetCount : 0));
+  const runningCount = Number(progressEvent?.detail?.running ?? (tasks.some((task) => ["leased", "running"].includes(task.status)) ? Math.min(concurrency, Math.max(0, targetCount - successCount - failedCount)) : 0));
+  const waitingCount = Math.max(0, targetCount - successCount - failedCount - runningCount);
+  $("#registration-metrics").innerHTML = [["总任务", targetCount], ["等待", waitingCount], ["执行中", runningCount], ["成功", successCount], ["失败/停止", failedCount]].map(([name, value]) => `<div><span>${name}</span><strong>${value}</strong></div>`).join("");
+  const allDone = tasks.every((task) => ["succeeded", "failed", "cancelled"].includes(task.status));
   const elapsedUntil = allDone ? Math.max(...tasks.map((task) => task.finishedAt || task.updatedAt)) : Date.now();
-  const batchState = allDone ? (counts.failed ? "已结束" : "已完成") : counts.running ? "执行中" : "排队中";
-  $("#registration-batch-meta").textContent = `${new Date(startedAt).toLocaleString("zh-CN", { hour12: false })} · ${tasks.length} 个任务`;
+  const batchState = allDone ? (failedCount ? "已结束" : "已完成") : runningCount ? "执行中" : "排队中";
+  $("#registration-batch-meta").textContent = `${new Date(startedAt).toLocaleString("zh-CN", { hour12: false })} · ${targetCount} 个任务 · 并发 ${concurrency}`;
   $("#registration-batch-status").textContent = batchState;
-  $("#registration-batch-status").className = `status ${allDone ? (counts.failed ? "bad" : "good") : "warn"}`;
+  $("#registration-batch-status").className = `status ${allDone ? (failedCount ? "bad" : "good") : "warn"}`;
   $("#registration-current-step").textContent = latest ? taskMessage(latest) : labels[active?.status] || "等待 Worker 处理";
   $("#registration-elapsed").textContent = `${Math.max(0, Math.floor((elapsedUntil - startedAt) / 1000))} 秒`;
-  $("#registration-progress-bar").style.width = `${tasks.length ? Math.round(terminal / tasks.length * 100) : 0}%`;
+  $("#registration-progress-bar").style.width = `${targetCount ? Math.round((successCount + failedCount) / targetCount * 100) : 0}%`;
   $("#registration-stop").disabled = allDone;
   const logRows = events.map((event) => `<div class="registration-log-line"><time>${new Date(event.createdAt).toLocaleTimeString("zh-CN", { hour12: false })}</time><span>${escapeHtml(event.type)}</span><strong>${escapeHtml(taskMessage(event))}</strong></div>`);
   if (active?.error && !events.some((event) => taskMessage(event) === active.error)) logRows.push(`<div class="registration-log-line error"><time>${new Date(active.updatedAt).toLocaleTimeString("zh-CN", { hour12: false })}</time><span>error</span><strong>${escapeHtml(active.error)}</strong></div>`);
@@ -214,7 +223,10 @@ async function loadKeepalive() {
   const data = await api("/admin/api/maintainer");
   const pool = data.pool || {};
   $("#keepalive-metrics").innerHTML = [["账号总数", pool.total || 0], ["已启用", pool.enabled || 0], ["可用", pool.live || 0], ["已过期", pool.expired || 0]].map(([name, value]) => `<div class="metric"><span>${name}</span><strong>${value}</strong></div>`).join("");
-  $("#reauth-summary").innerHTML = summary(data.reauth, { queued: "等待", running: "处理中", failed: "失败" });
+  $("#reauth-summary").innerHTML = summary(data.reauth, { workers: "独立线程", queued: "等待", running: "处理中", failed24h: "近 24h 失败" });
+  $("#reauth-failures").innerHTML = (data.reauth?.failures || []).length
+    ? `<h3>近期失败原因</h3>${data.reauth.failures.map((item) => `<div class="reauth-failure"><span title="${escapeHtml(item.reason)}">${escapeHtml(item.reason)}</span><strong>${escapeHtml(item.count)}</strong></div>`).join("")}`
+    : "";
 }
 
 async function loadModels() {
@@ -308,18 +320,20 @@ $("#refresh-button").addEventListener("click", () => { void loadConnection(); vo
 $$('[data-tab]').forEach((button) => button.addEventListener("click", () => showTab(button.dataset.tab)));
 $("#account-search").addEventListener("click", () => { state.accountPage = 1; void loadAccounts(); });
 $("#key-create").addEventListener("click", () => dialog("创建 API Key", `<label>名称<input name="name" required maxlength="120"></label><label>备注<input name="note" maxlength="1000"></label>`, async (form) => { const data = await api("/admin/api/keys", { method: "POST", body: JSON.stringify({ name: form.get("name"), note: form.get("note") }) }); showSecret(data.secret); }));
-$("#registration-save").addEventListener("click", () => { localStorage.setItem("grok2api-registration-count", $("#registration-count").value); setConnection("注册设置已保存", "ready"); });
+$("#registration-save").addEventListener("click", () => { localStorage.setItem("grok2api-registration-count", $("#registration-count").value); localStorage.setItem("grok2api-registration-concurrency", $("#registration-concurrency").value); setConnection("注册设置已保存", "ready"); });
 $("#registration-start").addEventListener("click", async () => {
   const button = $("#registration-start");
   const count = Number($("#registration-count").value);
+  const concurrency = Number($("#registration-concurrency").value);
   button.disabled = true; button.textContent = "正在提交…";
   showRegistrationNotice(`正在提交 ${count} 个注册任务…`, "pending");
   try {
     localStorage.setItem("grok2api-registration-count", String(count));
-    const data = await api("/admin/api/accounts/register", { method: "POST", body: JSON.stringify({ count }) });
-    state.registrationBatch = { ids: data.tasks.map((task) => task.id), startedAt: Math.min(...data.tasks.map((task) => task.createdAt)) };
+    localStorage.setItem("grok2api-registration-concurrency", String(concurrency));
+    const data = await api("/admin/api/accounts/register", { method: "POST", body: JSON.stringify({ count, concurrency }) });
+    state.registrationBatch = { ids: data.tasks.map((task) => task.id), startedAt: Math.min(...data.tasks.map((task) => task.createdAt)), targetCount: data.count, concurrency: data.concurrency };
     localStorage.setItem("grok2api-registration-batch", JSON.stringify(state.registrationBatch));
-    showRegistrationNotice(`已提交 ${data.count} 个任务，Worker 将按顺序执行。`, "success");
+    showRegistrationNotice(`批次已提交：共 ${data.count} 个，并发 ${data.concurrency}。`, "success");
     await loadTasks();
   } catch (error) { showRegistrationNotice(error.message || "任务提交失败", "error"); }
   finally { button.textContent = "启动批量注册"; button.disabled = !state.registrationAvailable; }

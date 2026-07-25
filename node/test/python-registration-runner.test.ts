@@ -59,6 +59,10 @@ test("Python registration worker returns SSO to Node over direct egress", async 
     email: "new@mail.example.test",
     mailProvider: "cloudflare_temp_mail",
     executor: "python_registration_worker",
+    targetCount: 1,
+    concurrency: 1,
+    successCount: 1,
+    failedCount: 0,
   });
   assert.deepEqual(savedMailbox, {
     accountId: "account-1",
@@ -66,6 +70,57 @@ test("Python registration worker returns SSO to Node over direct egress", async 
     address: "new@mail.example.test",
     accessToken: "private-mailbox-token",
   });
+});
+
+test("Python registration worker delegates lazy batch concurrency and persists every account", async () => {
+  let batchPolls = 0;
+  const converted: string[] = [];
+  const events: Array<{ type: string; detail?: Readonly<Record<string, unknown>> }> = [];
+  const runner = new PythonRegistrationTaskRunner({
+    serviceUrl: "http://127.0.0.1:18070",
+    token: null,
+    timeoutMs: 60_000,
+    cfMailBaseUrl: "https://mail.example.test",
+    cfMailAdminPassword: "mail-admin-password",
+    cfMailDomain: "mail.example.test",
+    ssoConverter: {
+      async registerFromSsoCookie(_sso, email) {
+        const address = email || "";
+        converted.push(address);
+        return { accountId: `account-${address}`, email: address };
+      },
+    },
+    mailboxStore: { saveCloudflareMailboxCredential() {} },
+    fetchImpl: async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/internal/registration/v1/jobs")) {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        assert.equal(body.count, 3);
+        assert.equal(body.concurrency, 2);
+        return Response.json({ batch: true, batch_id: "batch-1", status: "running" });
+      }
+      if (url.endsWith("/internal/registration/v1/batches/batch-1")) {
+        batchPolls += 1;
+        return batchPolls === 1
+          ? Response.json({ status: "running", count: 3, imported: 1, error: 0, running: 1, spawned: 2, sessions: [{ id: "session-1", status: "imported" }, { id: "session-2", status: "running" }] })
+          : Response.json({ status: "done", count: 3, imported: 3, error: 0, running: 0, spawned: 3, sessions: [{ id: "session-2", status: "imported" }, { id: "session-3", status: "imported" }] });
+      }
+      const match = url.match(/\/sessions\/(session-\d+)\?include_auth_json=1$/);
+      if (match) {
+        const email = `${match[1]}@mail.example.test`;
+        return Response.json({ status: "imported", auth_json: { external_registration: { sso: `sso-${match[1]}`, token: { access_token: `token-${match[1]}` }, email, mailbox: { id: `mail-${match[1]}`, address: email, access_token: `mail-token-${match[1]}` } } } });
+      }
+      throw new Error(`unexpected registration worker request ${url}`);
+    },
+  });
+
+  const result = await runner.run({ count: 3, concurrency: 2 }, { onEvent: (event) => events.push(event) });
+  assert.equal(result.targetCount, 3);
+  assert.equal(result.concurrency, 2);
+  assert.equal(result.successCount, 3);
+  assert.equal(result.failedCount, 0);
+  assert.deepEqual(converted.sort(), ["session-1@mail.example.test", "session-2@mail.example.test", "session-3@mail.example.test"]);
+  assert.equal(events.some((event) => event.type === "worker_batch_progress" && event.detail?.running === 1), true);
 });
 
 test("Python registration worker stops a failed direct session", async () => {

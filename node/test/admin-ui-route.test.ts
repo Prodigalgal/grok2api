@@ -16,6 +16,8 @@ test("Node admin page and static assets are served without exposing an API sessi
     assert.match(html, /id="login-form"/);
     assert.match(html, /id="registration-batch-status"/);
     assert.match(html, /id="registration-log"/);
+    assert.match(html, /id="registration-concurrency"/);
+    assert.match(html, /id="reauth-failures"/);
     assert.equal((await fetch(`http://127.0.0.1:${port}/admin/tasks`)).status, 200);
     assert.equal((await fetch(`http://127.0.0.1:${port}/admin/keepalive`)).status, 200);
     const script = await fetch(`http://127.0.0.1:${port}/admin/app.js`);

@@ -11,6 +11,7 @@ export interface AutomationTaskWorkerOptions {
   readonly emailLoginRunner?: BrowserTaskRunner | null;
   readonly config: Pick<AppConfig, "workerLeaseMs" | "ssoReauthCooldownMs">;
   readonly owner?: string;
+  readonly kinds?: readonly string[];
 }
 
 export class AutomationTaskWorker {
@@ -54,7 +55,7 @@ export class AutomationTaskWorker {
     this.running = true;
     try {
       const tasks = this.options.store.automationTasks();
-      const task = tasks.claimNext(this.owner, this.options.config.workerLeaseMs);
+      const task = tasks.claimNext(this.owner, this.options.config.workerLeaseMs, Date.now(), this.options.kinds);
       if (!task) {
         return;
       }
@@ -79,7 +80,7 @@ export class AutomationTaskWorker {
           }
           const result = await runner.run(task.request, {
             signal: controller.signal,
-            onEvent: (event) => tasks.appendEvent(task.id, event.type, { message: event.message }),
+            onEvent: (event) => tasks.appendEvent(task.id, event.type, { ...event.detail, message: event.message }),
           });
           tasks.succeed(task.id, this.owner, result);
         } catch (error) {
@@ -116,14 +117,22 @@ export class AutomationTaskWorker {
     } catch (error) {
       const reason = messageFor(error);
       this.options.store.markSsoReauthFailure(accountId, reason, this.options.config.ssoReauthCooldownMs);
-      tasks.fail(taskId, this.owner, `saved SSO recovery failed; automatic email login queued: ${reason}`);
-      tasks.enqueue("sso_email_reauth", `sso_email_reauth:auto:${accountId}:${Date.now()}`, {
+      const queued = tasks.enqueue("sso_email_reauth", `sso_email_reauth:auto:${accountId}:${Date.now()}`, {
         accountId,
         trigger: "saved_sso_invalid",
         browser: { url: "https://accounts.x.ai/sign-in", actions: [{ type: "xai_email_login" }] },
       });
+      tasks.succeed(taskId, this.owner, { accountId, recoveredBy: "email_queued", queuedTaskId: queued.id, savedSsoError: reason });
     }
   }
+}
+
+export class AutomationTaskWorkerPool {
+  constructor(private readonly workers: readonly AutomationTaskWorker[]) {}
+
+  start(): void { for (const worker of this.workers) worker.start(); }
+  stop(): void { for (const worker of this.workers) worker.stop(); }
+  cancel(taskId: string): boolean { return this.workers.some((worker) => worker.cancel(taskId)); }
 }
 
 function messageFor(error: unknown): string {

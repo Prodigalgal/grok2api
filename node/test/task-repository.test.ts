@@ -84,6 +84,19 @@ test("registration tasks are claimed before background reauthorization", () => {
   }
 });
 
+test("dedicated workers only claim their configured task kinds", () => {
+  const { db, repo, dir } = createRepository();
+  try {
+    const reauth = repo.enqueue("sso_email_reauth", "dedicated-reauth", { accountId: "account-1" }, 1_000);
+    const registration = repo.enqueue("registration", "dedicated-registration", { browser: {} }, 1_001);
+    assert.equal(repo.claimNext("reauth-worker", 10_000, 2_000, ["sso_reauth", "sso_email_reauth"])?.id, reauth.id);
+    assert.equal(repo.claimNext("registration-worker", 10_000, 2_001, ["registration"])?.id, registration.id);
+  } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("running registration tasks record logs and can be cancelled by their owner", () => {
   const { db, repo, dir } = createRepository();
   try {

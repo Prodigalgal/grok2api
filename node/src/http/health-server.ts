@@ -32,7 +32,9 @@ export interface ApiServerOptions {
   readonly registrationDefaults?: {
     readonly mailBaseUrl: string | null;
     readonly mailDomain: string | null;
+    readonly maxConcurrency?: number;
   };
+  readonly reauthConcurrency?: number;
   readonly adminStore?: SqliteStore | null;
   readonly adminUsername?: string | null;
   readonly adminPassword?: string | null;
@@ -144,6 +146,12 @@ function publicTask(task: AutomationTask): Record<string, unknown> {
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
     finishedAt: task.finishedAt,
+    ...(task.kind === "registration" ? {
+      batch: {
+        count: typeof task.request.count === "number" ? task.request.count : 1,
+        concurrency: typeof task.request.concurrency === "number" ? task.request.concurrency : 1,
+      },
+    } : {}),
   };
 }
 
@@ -527,8 +535,13 @@ export function createApiServer(options: ApiServerOptions = {}): HealthServer {
     }
     const body = requestBody(request);
     const count = typeof body.count === "number" && Number.isInteger(body.count) ? body.count : 1;
-    if (count < 1 || count > 20) {
-      return reply.code(400).header("cache-control", "no-store").send({ detail: "registration count must be between 1 and 20" });
+    if (count < 1 || count > 100) {
+      return reply.code(400).header("cache-control", "no-store").send({ detail: "registration count must be between 1 and 100" });
+    }
+    const maxConcurrency = Math.max(1, options.registrationDefaults?.maxConcurrency ?? 1);
+    const concurrency = typeof body.concurrency === "number" && Number.isInteger(body.concurrency) ? body.concurrency : 1;
+    if (concurrency < 1 || concurrency > maxConcurrency || concurrency > count) {
+      return reply.code(400).header("cache-control", "no-store").send({ detail: `registration concurrency must be between 1 and ${Math.min(maxConcurrency, count)}` });
     }
     const text = (value: unknown): string => typeof value === "string" ? value.trim() : "";
     const registration = {
@@ -542,12 +555,14 @@ export function createApiServer(options: ApiServerOptions = {}): HealthServer {
       }
     }
     const baseKey = text(body.idempotency_key) || `registration:${randomUUID()}`;
-    const tasks = Array.from({ length: count }, (_unused, index) => automationTasks.enqueue("registration", `${baseKey}:${index + 1}`, {
+    const task = automationTasks.enqueue("registration", baseKey, {
       browser: {},
+      count,
+      concurrency,
       registration,
       mailbox: registration.mailDomain ? { domain: registration.mailDomain } : {},
-    }));
-    return reply.code(202).header("cache-control", "no-store").send({ ok: true, tasks: tasks.map(publicTask), count: tasks.length });
+    });
+    return reply.code(202).header("cache-control", "no-store").send({ ok: true, tasks: [publicTask(task)], count, concurrency });
   });
 
   for (const method of ["patch", "post"] as const) {
@@ -646,12 +661,21 @@ export function createApiServer(options: ApiServerOptions = {}): HealthServer {
     const store = requireAdminStore(request, reply); if (!store) return reply;
     const tasks = automationTasks?.list({ limit: 500 }) ?? [];
     const reauth = tasks.filter((task) => task.kind === "sso_reauth" || task.kind === "sso_email_reauth");
+    const recentCutoff = Date.now() - 86_400_000;
+    const recentFinalFailures = reauth.filter((task) => task.kind === "sso_email_reauth" && task.status === "failed" && task.updatedAt >= recentCutoff);
+    const failureCounts = new Map<string, number>();
+    for (const task of recentFinalFailures) {
+      const reason = task.error || "unknown reauthorization failure";
+      failureCounts.set(reason, (failureCounts.get(reason) ?? 0) + 1);
+    }
     return reply.header("cache-control", "no-store").send({
       ok: true, available: maintainer !== null, pool: store.poolSummary(),
       reauth: {
         queued: reauth.filter((task) => task.status === "queued").length,
         running: reauth.filter((task) => task.status === "running" || task.status === "leased").length,
-        failed: reauth.filter((task) => task.status === "failed").length,
+        failed24h: recentFinalFailures.length,
+        workers: Math.max(1, options.reauthConcurrency ?? 1),
+        failures: [...failureCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([reason, count]) => ({ reason, count })),
       },
     });
   });
@@ -693,6 +717,7 @@ export function createApiServer(options: ApiServerOptions = {}): HealthServer {
         mail_base_url: options.registrationDefaults?.mailBaseUrl ?? null,
         mail_domain: options.registrationDefaults?.mailDomain ?? null,
         mail_configured: Boolean(options.registrationDefaults?.mailBaseUrl),
+        max_concurrency: Math.max(1, options.registrationDefaults?.maxConcurrency ?? 1),
       },
       ...(registrationAvailable ? {} : { detail: "registration mail is not configured" }),
     });
