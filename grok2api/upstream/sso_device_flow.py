@@ -161,4 +161,6 @@ def _response_error(response: Any, payload: dict[str, Any], fallback: str) -> st
 
 def _retryable(message: str) -> bool:
     value = message.lower()
+    if "access denied" in value:
+        return False
     return any(term in value for term in ("429", "rate", "slow_down", "invalid_grant", "timeout", "temporar", "network"))

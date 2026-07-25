@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from grok2api.upstream.sso_device_flow import _response_error, exchange_sso_for_token
+from grok2api.upstream.sso_device_flow import _response_error, _retryable, exchange_sso_for_token
 
 
 class _Cookies:
@@ -90,6 +90,10 @@ class SsoDeviceFlowTests(unittest.TestCase):
             _response_error(response, response.json(), "device token rejected"),
             "device token rejected: invalid_grant: authorization was rejected",
         )
+
+    def test_access_denied_is_not_retried(self) -> None:
+        self.assertFalse(_retryable("device token rejected: invalid_grant: Access denied"))
+        self.assertTrue(_retryable("device token rejected: invalid_grant"))
 
 
 if __name__ == "__main__":
