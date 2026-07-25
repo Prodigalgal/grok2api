@@ -102,3 +102,32 @@ test("a lost task lease cannot crash the automation worker", async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("explicit xAI OAuth access denial disables the banned account", async () => {
+  const { store, dir } = createStore();
+  try {
+    store.saveAccount({ id: "account-banned", email: "banned@example.test", payload: { key: "expired" }, expiresAt: Date.now() - 1 });
+    const task = store.automationTasks().enqueue("sso_email_reauth", "reauth:banned", { accountId: "account-banned" });
+    const worker = new AutomationTaskWorker({
+      store,
+      ssoReauth: { reauthenticate: async () => ({ accountId: "unused" }) },
+      browserRunner: { run: async () => ({}) },
+      emailLoginRunner: { run: async () => { throw new Error("device token rejected: invalid_grant: Access denied"); } },
+      config: { workerLeaseMs: 10_000, ssoReauthCooldownMs: 3_600_000 },
+      owner: "banned-worker",
+      kinds: ["sso_email_reauth"],
+    });
+
+    await worker.runOnce();
+    assert.equal(store.automationTasks().get(task.id)?.status, "failed");
+    const account = store.getAccountSummary("account-banned");
+    assert.equal(account?.enabled, false);
+    assert.match(account?.disabledReason ?? "", /^banned: .*Access denied$/);
+    assert.equal(store.listAccountsNeedingReauth().includes("account-banned"), false);
+    assert.equal(store.enableAllRecoverableAccounts().banned, 1);
+    assert.equal(store.getAccountSummary("account-banned")?.enabled, false);
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

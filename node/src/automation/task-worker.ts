@@ -95,7 +95,10 @@ export class AutomationTaskWorker {
               const reason = messageFor(error);
               if (task.kind === "sso_email_reauth") {
                 const accountId = typeof task.request.accountId === "string" ? task.request.accountId : "";
-                if (accountId) this.options.store.markSsoReauthFailure(accountId, reason, this.options.config.ssoReauthCooldownMs);
+                if (accountId) {
+                  if (isOAuthAccessDenied(reason)) this.options.store.markSsoReauthBanned(accountId, reason);
+                  else this.options.store.markSsoReauthFailure(accountId, reason, this.options.config.ssoReauthCooldownMs);
+                }
               }
               tasks.fail(task.id, this.owner, reason);
             }
@@ -148,4 +151,8 @@ export class AutomationTaskWorkerPool {
 
 function messageFor(error: unknown): string {
   return error instanceof Error ? error.message.slice(0, 400) : "automation task failed";
+}
+
+function isOAuthAccessDenied(reason: string): boolean {
+  return /invalid_grant\s*:\s*access denied/i.test(reason);
 }

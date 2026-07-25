@@ -711,6 +711,18 @@ export class SqliteStore implements ApiKeyStore, ModelStore {
     `).run(reason, now, now, now + Math.max(60_000, cooldownMs), reason, now, accountId);
   }
 
+  markSsoReauthBanned(accountId: string, error: string, now = Date.now()): void {
+    const reason = `banned: ${(error.trim() || "xAI OAuth access denied").slice(0, 380)}`;
+    this.db.prepare(`
+      UPDATE account_pool
+      SET enabled = 0, pool_status = 'disabled', disabled_reason = ?,
+          last_error = ?, last_renew_status = 'sso_banned', last_renew_at = ?,
+          sso_reauth_failed_at = ?, sso_reauth_next_at = NULL,
+          sso_reauth_error = ?, updated_at = ?
+      WHERE account_id = ?
+    `).run(reason, reason, now, now, reason, now, accountId);
+  }
+
   automationTasks(): AutomationTaskRepository {
     return new AutomationTaskRepository(this.db);
   }
