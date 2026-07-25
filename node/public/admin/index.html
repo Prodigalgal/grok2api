@@ -69,12 +69,27 @@
 
         <section data-panel="tasks" class="panel">
           <div class="workbench-head">
-            <div><h1>批量注册</h1><p>使用服务器配置的 CF Temp Mail 与独立代理池创建账号。</p></div>
+            <div><h1>批量注册</h1><p>使用服务器配置的临时邮箱，通过节点出口自动完成注册。</p></div>
             <div class="toolbar"><button id="registration-save" type="button" class="quiet">保存设置</button><button id="registration-start" type="button">启动批量注册</button><button id="registration-stop" type="button" class="danger">停止任务</button></div>
           </div>
-          <div id="registration-metrics" class="metrics"></div>
-            <section class="tool-surface registration-settings"><h2>注册设置</h2><div class="form-grid"><label>成功目标<input id="registration-count" type="number" min="1" max="20" value="1"></label><label>执行并发<input value="1" disabled></label><label>邮箱域名<input id="registration-domain" readonly></label><label>网络出口<input value="节点直连" readonly></label></div></section>
-          <div class="table-wrap"><table><thead><tr><th>类型</th><th>状态</th><th>尝试</th><th>更新时间</th><th>日志</th><th></th></tr></thead><tbody id="tasks-body"></tbody></table></div>
+          <div id="registration-notice" class="registration-notice" hidden></div>
+          <div class="registration-workspace">
+            <section class="registration-settings">
+              <div class="section-heading"><div><h2>注册设置</h2><p>任务按顺序执行，提交后可离开页面。</p></div><span id="registration-availability" class="status warn">检查中</span></div>
+              <div class="form-grid registration-form"><label>注册数量<input id="registration-count" type="number" min="1" max="20" value="1"></label><label>执行方式<input value="串行（1 个 Worker）" disabled></label><label>邮箱域名<input id="registration-domain" readonly></label><label>网络出口<input value="节点直连" readonly></label></div>
+            </section>
+            <section class="registration-live">
+              <div class="section-heading"><div><h2>当前批次</h2><p id="registration-batch-meta">尚未启动批次</p></div><span id="registration-batch-status" class="status">空闲</span></div>
+              <div id="registration-metrics" class="registration-metrics"></div>
+              <div class="registration-progress" aria-label="注册批次进度"><span id="registration-progress-bar"></span></div>
+              <div class="registration-current"><span>当前阶段</span><strong id="registration-current-step">等待启动</strong><time id="registration-elapsed">-</time></div>
+              <div id="registration-log" class="registration-log" role="log" aria-live="polite"><div class="registration-log-empty">任务启动后，这里会显示实际执行日志。</div></div>
+            </section>
+          </div>
+          <section class="registration-history">
+            <div class="section-heading"><div><h2>任务记录</h2><p>最近 100 条注册任务</p></div><button id="registration-refresh" type="button" class="quiet">刷新</button></div>
+            <div class="table-wrap"><table><thead><tr><th>任务</th><th>状态</th><th>尝试</th><th>创建时间</th><th>更新时间</th><th></th></tr></thead><tbody id="tasks-body"></tbody></table></div>
+          </section>
         </section>
 
         <section data-panel="keepalive" class="panel">
@@ -118,6 +133,6 @@
       </form>
     </dialog>
     <dialog id="secret-dialog"><form method="dialog"><header><h2>新 API Key</h2><button type="submit" class="quiet">关闭</button></header><code id="issued-secret"></code><footer><button id="copy-secret" type="button">复制</button></footer></form></dialog>
-    <script type="module" src="/admin/app.js?v=20260724"></script>
+    <script type="module" src="/admin/app.js?v=20260725"></script>
   </body>
 </html>
