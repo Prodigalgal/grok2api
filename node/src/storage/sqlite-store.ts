@@ -36,6 +36,13 @@ export interface AccountSummary {
   readonly failCount: number;
   readonly lastUsedAt: number | null;
   readonly lastError: string | null;
+  readonly lastRenewStatus: string | null;
+  readonly lastRenewAt: number | null;
+  readonly renewFailCount: number;
+  readonly ssoReauthNextAt: number | null;
+  readonly ssoReauthError: string | null;
+  readonly reauthTaskStatus: string | null;
+  readonly reauthTaskUpdatedAt: number | null;
   readonly hasEmailMailbox: boolean;
   readonly updatedAt: number;
 }
@@ -56,6 +63,7 @@ export interface PoolSummary {
   readonly quotaDisabled: number;
   readonly cooldown: number;
   readonly expired: number;
+  readonly banned: number;
 }
 
 export interface ApiKeySummary {
@@ -468,7 +476,7 @@ export class SqliteStore implements ApiKeyStore, ModelStore {
 
   listAccountSummaries(options: {
     readonly query?: string;
-    readonly status?: "active" | "disabled" | "quota_disabled" | "cooldown" | "expired";
+    readonly status?: "active" | "disabled" | "quota_disabled" | "cooldown" | "expired" | "banned";
     readonly sort?: "id" | "email" | "expires_at" | "last_used_at" | "request_count";
     readonly page?: number;
     readonly pageSize?: number;
@@ -504,6 +512,9 @@ export class SqliteStore implements ApiKeyStore, ModelStore {
         where.push("a.expires_at IS NOT NULL AND a.expires_at <= ?");
         values.push(now);
         break;
+      case "banned":
+        where.push("(p.last_renew_status = 'sso_banned' OR lower(COALESCE(p.disabled_reason, '')) LIKE '%banned%' OR lower(COALESCE(p.disabled_reason, '')) LIKE '%suspended%' OR p.disabled_reason LIKE '%封禁%')");
+        break;
       case undefined:
         break;
     }
@@ -524,7 +535,16 @@ export class SqliteStore implements ApiKeyStore, ModelStore {
              CASE WHEN instr(a.payload_json, '"registration_mailbox"') > 0 THEN 1 ELSE 0 END AS has_email_mailbox,
              p.enabled, p.disabled_for_quota, p.disabled_reason, p.cooldown_until,
              p.pool_status, p.weight, p.request_count, p.success_count, p.fail_count,
-             p.last_used_at, p.last_error
+             p.last_used_at, p.last_error, p.last_renew_status, p.last_renew_at,
+             p.renew_fail_count, p.sso_reauth_next_at, p.sso_reauth_error,
+             (SELECT t.status FROM automation_tasks t
+              WHERE t.kind IN ('sso_reauth', 'sso_email_reauth')
+                AND json_extract(t.request_json, '$.accountId') = a.id
+              ORDER BY t.created_at DESC, t.id DESC LIMIT 1) AS reauth_task_status,
+             (SELECT t.updated_at FROM automation_tasks t
+              WHERE t.kind IN ('sso_reauth', 'sso_email_reauth')
+                AND json_extract(t.request_json, '$.accountId') = a.id
+              ORDER BY t.created_at DESC, t.id DESC LIMIT 1) AS reauth_task_updated_at
       FROM accounts a INNER JOIN account_pool p ON p.account_id = a.id
       ${clause} ORDER BY ${orderBy[sort]} LIMIT ? OFFSET ?
     `).all(...values, pageSize, (page - 1) * pageSize) as unknown as AccountSummaryRow[];
@@ -543,7 +563,16 @@ export class SqliteStore implements ApiKeyStore, ModelStore {
              CASE WHEN instr(a.payload_json, '"registration_mailbox"') > 0 THEN 1 ELSE 0 END AS has_email_mailbox,
              p.enabled, p.disabled_for_quota, p.disabled_reason, p.cooldown_until,
              p.pool_status, p.weight, p.request_count, p.success_count, p.fail_count,
-             p.last_used_at, p.last_error
+             p.last_used_at, p.last_error, p.last_renew_status, p.last_renew_at,
+             p.renew_fail_count, p.sso_reauth_next_at, p.sso_reauth_error,
+             (SELECT t.status FROM automation_tasks t
+              WHERE t.kind IN ('sso_reauth', 'sso_email_reauth')
+                AND json_extract(t.request_json, '$.accountId') = a.id
+              ORDER BY t.created_at DESC, t.id DESC LIMIT 1) AS reauth_task_status,
+             (SELECT t.updated_at FROM automation_tasks t
+              WHERE t.kind IN ('sso_reauth', 'sso_email_reauth')
+                AND json_extract(t.request_json, '$.accountId') = a.id
+              ORDER BY t.created_at DESC, t.id DESC LIMIT 1) AS reauth_task_updated_at
       FROM accounts a INNER JOIN account_pool p ON p.account_id = a.id WHERE a.id = ?
     `).get(id) as AccountSummaryRow | undefined;
     return row ? accountSummary(row) : null;
@@ -558,13 +587,17 @@ export class SqliteStore implements ApiKeyStore, ModelStore {
         SUM(CASE WHEN p.disabled_for_quota = 1 THEN 1 ELSE 0 END) AS quota_disabled,
         SUM(CASE WHEN p.cooldown_until IS NOT NULL AND p.cooldown_until > ? THEN 1 ELSE 0 END) AS cooldown,
         SUM(CASE WHEN a.expires_at IS NOT NULL AND a.expires_at <= ? THEN 1 ELSE 0 END) AS expired,
+        SUM(CASE WHEN p.last_renew_status = 'sso_banned'
+                       OR lower(COALESCE(p.disabled_reason, '')) LIKE '%banned%'
+                       OR lower(COALESCE(p.disabled_reason, '')) LIKE '%suspended%'
+                       OR p.disabled_reason LIKE '%封禁%' THEN 1 ELSE 0 END) AS banned,
         SUM(CASE WHEN p.enabled = 1 AND p.disabled_for_quota = 0
                       AND (p.cooldown_until IS NULL OR p.cooldown_until <= ?)
                       AND (a.expires_at IS NULL OR a.expires_at > ?) THEN 1 ELSE 0 END) AS live
       FROM accounts a INNER JOIN account_pool p ON p.account_id = a.id
     `).get(now, now, now, now) as {
       total: number; enabled: number | null; disabled: number | null; quota_disabled: number | null;
-      cooldown: number | null; expired: number | null; live: number | null;
+      cooldown: number | null; expired: number | null; banned: number | null; live: number | null;
     };
     return {
       total: row.total,
@@ -574,6 +607,7 @@ export class SqliteStore implements ApiKeyStore, ModelStore {
       quotaDisabled: row.quota_disabled ?? 0,
       cooldown: row.cooldown ?? 0,
       expired: row.expired ?? 0,
+      banned: row.banned ?? 0,
     };
   }
 
@@ -1554,6 +1588,13 @@ interface AccountSummaryRow {
   readonly fail_count: number;
   readonly last_used_at: number | null;
   readonly last_error: string | null;
+  readonly last_renew_status: string | null;
+  readonly last_renew_at: number | null;
+  readonly renew_fail_count: number;
+  readonly sso_reauth_next_at: number | null;
+  readonly sso_reauth_error: string | null;
+  readonly reauth_task_status: string | null;
+  readonly reauth_task_updated_at: number | null;
 }
 
 interface ApiKeySummaryRow {
@@ -1611,6 +1652,13 @@ function accountSummary(row: AccountSummaryRow): AccountSummary {
     failCount: row.fail_count,
     lastUsedAt: row.last_used_at,
     lastError: row.last_error,
+    lastRenewStatus: row.last_renew_status,
+    lastRenewAt: row.last_renew_at,
+    renewFailCount: row.renew_fail_count,
+    ssoReauthNextAt: row.sso_reauth_next_at,
+    ssoReauthError: row.sso_reauth_error,
+    reauthTaskStatus: row.reauth_task_status,
+    reauthTaskUpdatedAt: row.reauth_task_updated_at,
     hasEmailMailbox: row.has_email_mailbox !== 0,
     updatedAt: row.updated_at,
   };

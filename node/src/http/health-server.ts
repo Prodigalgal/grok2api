@@ -391,7 +391,7 @@ export function createApiServer(options: ApiServerOptions = {}): HealthServer {
     }
     const query = request.query as { q?: unknown; status?: unknown; sort?: unknown; page?: unknown; page_size?: unknown };
     const status = typeof query.status === "string" && query.status.trim() ? query.status.trim() : undefined;
-    if (status !== undefined && !["active", "disabled", "quota_disabled", "cooldown", "expired"].includes(status)) {
+    if (status !== undefined && !["active", "disabled", "quota_disabled", "cooldown", "expired", "banned"].includes(status)) {
       return reply.code(400).header("cache-control", "no-store").send({ detail: "unsupported account status filter" });
     }
     const sort = typeof query.sort === "string" && query.sort.trim() ? query.sort.trim() : undefined;
@@ -403,7 +403,7 @@ export function createApiServer(options: ApiServerOptions = {}): HealthServer {
     const pageSize = numberQuery(query.page_size);
     const result = store.listAccountSummaries({
       ...(typeof query.q === "string" && query.q.trim() ? { query: query.q } : {}),
-      ...(status ? { status: status as "active" | "disabled" | "quota_disabled" | "cooldown" | "expired" } : {}),
+      ...(status ? { status: status as "active" | "disabled" | "quota_disabled" | "cooldown" | "expired" | "banned" } : {}),
       ...(sort ? { sort: sort as "id" | "email" | "expires_at" | "last_used_at" | "request_count" } : {}),
       ...(page ? { page } : {}),
       ...(pageSize ? { pageSize } : {}),

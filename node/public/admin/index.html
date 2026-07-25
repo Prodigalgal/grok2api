@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=1180">
     <meta name="color-scheme" content="light">
     <title>grok2api</title>
-    <link rel="stylesheet" href="/admin/app.css?v=20260724">
+    <link rel="stylesheet" href="/admin/app.css?v=20260725c">
   </head>
   <body>
     <main class="shell">
@@ -54,10 +54,10 @@
             <button id="account-export" type="button" class="quiet">导出账号</button>
             <button id="maintainer-run" type="button" class="quiet">立即续期</button>
             <label class="search">筛选账号<input id="account-query" type="search" placeholder="账号 ID、邮箱或用户 ID"></label>
-            <select id="account-status"><option value="">全部状态</option><option value="active">可用</option><option value="disabled">已停用</option><option value="quota_disabled">额度停用</option><option value="cooldown">冷却中</option><option value="expired">已过期</option></select>
+            <select id="account-status"><option value="">全部状态</option><option value="active">正常</option><option value="banned">OAuth 封禁</option><option value="disabled">手动停用</option><option value="quota_disabled">额度停用</option><option value="cooldown">冷却中</option><option value="expired">已过期</option></select>
             <button id="account-search" type="button">查询</button>
           </div>
-          <div class="table-wrap"><table><thead><tr><th>账号</th><th>状态</th><th>权重</th><th>请求</th><th>过期</th><th></th></tr></thead><tbody id="accounts-body"></tbody></table></div>
+          <div class="table-wrap"><table class="accounts-table"><thead><tr><th>账号</th><th>账号状态</th><th>保活状态</th><th>请求统计</th><th>Token 有效期</th><th>最近活动</th><th></th></tr></thead><tbody id="accounts-body"></tbody></table></div>
           <div id="account-pagination" class="pagination"></div>
         </section>
 
@@ -133,6 +133,6 @@
       </form>
     </dialog>
     <dialog id="secret-dialog"><form method="dialog"><header><h2>新 API Key</h2><button type="submit" class="quiet">关闭</button></header><code id="issued-secret"></code><footer><button id="copy-secret" type="button">复制</button></footer></form></dialog>
-    <script type="module" src="/admin/app.js?v=20260725b"></script>
+    <script type="module" src="/admin/app.js?v=20260725c"></script>
   </body>
 </html>

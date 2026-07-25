@@ -18,6 +18,11 @@ test("SQLite admin management requires both credentials and exposes revealable A
     payload: { access_token: "private-access-token", refresh_token: "private-refresh-token" },
     expiresAt: Date.now() + 3_600_000,
   });
+  store.recordRefreshFailure("account-1", "Refresh token has been revoked", true);
+  store.markSsoReauthFailure("account-1", "saved SSO cookie is no longer valid", 3_600_000);
+  store.automationTasks().enqueue("sso_email_reauth", "account-1:reauth-status", { accountId: "account-1" });
+  store.saveAccount({ id: "account-banned", email: "banned@example.test", payload: { access_token: "banned-private-token" } });
+  store.markSsoReauthBanned("account-banned", "Access denied");
   const server = createApiServer({
     adminStore: store,
     modelStore: store,
@@ -37,7 +42,7 @@ test("SQLite admin management requires both credentials and exposes revealable A
     assert.equal(status.status, 200);
     const statusBody = await status.json() as { store: { backend: string; redis: boolean; postgresql: boolean }; accounts: { account_count: number } };
     assert.deepEqual(statusBody.store, { backend: "sqlite", redis: false, postgresql: false });
-    assert.equal(statusBody.accounts.account_count, 1);
+    assert.equal(statusBody.accounts.account_count, 2);
 
     const accounts = await fetch(`http://127.0.0.1:${port}/admin/api/accounts?q=member`, { headers: adminHeaders });
     assert.equal(accounts.status, 200);
@@ -46,6 +51,18 @@ test("SQLite admin management requires both credentials and exposes revealable A
     assert.equal(accountsText.includes("private-access-token"), false);
     assert.equal(accountsText.includes("private-refresh-token"), false);
     assert.match(accountsText, /"hasEmailMailbox":false/);
+    const accountsBody = JSON.parse(accountsText) as { accounts: Array<Record<string, unknown>> };
+    assert.equal(accountsBody.accounts[0]?.lastRenewStatus, "sso_failed");
+    assert.equal(accountsBody.accounts[0]?.renewFailCount, 1);
+    assert.equal(accountsBody.accounts[0]?.reauthTaskStatus, "queued");
+    assert.equal(typeof accountsBody.accounts[0]?.ssoReauthNextAt, "number");
+
+    const bannedAccounts = await fetch(`http://127.0.0.1:${port}/admin/api/accounts?status=banned`, { headers: adminHeaders });
+    assert.equal(bannedAccounts.status, 200);
+    const bannedBody = await bannedAccounts.json() as { total: number; pool: { banned: number }; accounts: Array<{ id: string }> };
+    assert.equal(bannedBody.total, 1);
+    assert.equal(bannedBody.pool.banned, 1);
+    assert.equal(bannedBody.accounts[0]?.id, "account-banned");
 
     const disabled = await fetch(`http://127.0.0.1:${port}/admin/api/accounts/account-1/enabled`, {
       method: "PATCH",

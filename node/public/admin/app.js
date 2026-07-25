@@ -42,7 +42,67 @@ function date(value) {
 function status(value) {
   const normalized = String(value || "-");
   const kind = /succeeded|normal|active|waiting_user/.test(normalized) ? "good" : /failed|expired|disabled|cancelled/.test(normalized) ? "bad" : "warn";
-  return `<span class="status ${kind}">${escapeHtml(normalized)}</span>`;
+  const labels = {
+    active: "已启用", normal: "正常", disabled: "已停用", quota_disabled: "额度停用", cooldown: "冷却中", expired: "已过期",
+    queued: "排队中", leased: "已领取", running: "运行中", waiting_input: "等待输入", waiting_user: "等待授权",
+    succeeded: "成功", failed: "失败", cancelled: "已取消",
+  };
+  return `<span class="status ${kind}">${escapeHtml(labels[normalized] || normalized)}</span>`;
+}
+
+function statusBadge(label, kind) {
+  return `<span class="status ${kind}">${escapeHtml(label)}</span>`;
+}
+
+function accountState(account) {
+  const banned = account.lastRenewStatus === "sso_banned" || /banned|suspended|封禁|access denied/i.test(account.disabledReason || "");
+  if (banned) return { label: "OAuth 封禁", kind: "bad", detail: "xAI 已拒绝该账号的 OAuth/API 访问" };
+  if (!account.enabled) return { label: "手动停用", kind: "bad", detail: account.disabledReason || "账号已由管理员停用" };
+  if (account.disabledForQuota) return { label: "额度停用", kind: "warn", detail: account.disabledReason || "账号额度不足，暂不参与请求" };
+  if (account.cooldownUntil && account.cooldownUntil > Date.now()) return { label: "冷却中", kind: "warn", detail: `恢复时间：${date(account.cooldownUntil)}` };
+  if (account.expiresAt && account.expiresAt <= Date.now()) return { label: "已过期", kind: "bad", detail: "Access Token 已过期，等待自动保活" };
+  return { label: "正常", kind: "good", detail: "账号可参与请求调度" };
+}
+
+function keepaliveState(account) {
+  if (account.lastRenewStatus === "sso_banned" || /banned|suspended|封禁|access denied/i.test(account.disabledReason || "")) {
+    return { label: "已停止", kind: "bad", detail: "确认封禁后不再自动重试" };
+  }
+  const taskIsCurrent = account.reauthTaskUpdatedAt && (!account.lastRenewAt || account.reauthTaskUpdatedAt >= account.lastRenewAt);
+  if (taskIsCurrent && ["running", "leased"].includes(account.reauthTaskStatus)) return { label: "重授权中", kind: "warn", detail: `任务更新：${date(account.reauthTaskUpdatedAt)}` };
+  if ((taskIsCurrent && account.reauthTaskStatus === "queued") || account.lastRenewStatus === "sso_queued") return { label: "等待重授权", kind: "warn", detail: "已进入独立保活队列" };
+  if ((taskIsCurrent && account.reauthTaskStatus === "failed") || account.lastRenewStatus === "sso_failed") {
+    const retry = account.ssoReauthNextAt ? `；下次尝试：${date(account.ssoReauthNextAt)}` : "";
+    return { label: "重授权失败", kind: "bad", detail: `${localizedReason(account.ssoReauthError || account.lastError)}${retry}` };
+  }
+  if (account.lastRenewStatus === "invalid") return { label: "刷新令牌失效", kind: "bad", detail: localizedReason(account.lastError) };
+  if (account.lastRenewStatus === "ok") return { label: "续期成功", kind: "good", detail: `最近续期：${date(account.lastRenewAt)}` };
+  if (account.expiresAt && account.expiresAt <= Date.now()) return { label: "等待续期", kind: "warn", detail: account.ssoReauthNextAt ? `下次尝试：${date(account.ssoReauthNextAt)}` : "等待自动保活调度" };
+  return { label: "无需续期", kind: "good", detail: account.lastRenewAt ? `最近检查：${date(account.lastRenewAt)}` : "Token 当前有效" };
+}
+
+function localizedReason(value) {
+  const reason = String(value || "").trim();
+  if (!reason) return "暂无失败原因";
+  if (/access denied/i.test(reason)) return "xAI 拒绝 OAuth/API 访问";
+  if (/saved SSO cookie is no longer valid/i.test(reason)) return "已保存的登录会话失效";
+  if (/refresh token.*revoked|refresh token is invalid/i.test(reason)) return "刷新令牌已撤销或失效";
+  if (/account email was not found/i.test(reason)) return "临时邮箱服务中未找到该账号";
+  if (/fetch failed|worker is unavailable/i.test(reason)) return "保活服务暂时不可用";
+  if (/timed out|timeout/i.test(reason)) return "保活请求超时";
+  return reason;
+}
+
+function relativeExpiry(value) {
+  if (!(typeof value === "number" && value > 0)) return "未提供有效期";
+  const delta = value - Date.now();
+  const absolute = Math.abs(delta);
+  const unit = absolute >= 86_400_000 ? `${Math.floor(absolute / 86_400_000)} 天` : absolute >= 3_600_000 ? `${Math.floor(absolute / 3_600_000)} 小时` : `${Math.max(1, Math.floor(absolute / 60_000))} 分钟`;
+  return delta > 0 ? `剩余 ${unit}` : `已过期 ${unit}`;
+}
+
+function statusCell(value) {
+  return `<div class="account-status">${statusBadge(value.label, value.kind)}<small>${escapeHtml(value.detail)}</small></div>`;
 }
 
 function escapeHtml(value) {
@@ -68,7 +128,7 @@ async function loadOverview() {
     ["API Key", data.keys?.enabled || 0], ["模型", data.models_count || 0],
   ];
   $("#overview-grid").innerHTML = metrics.map(([name, value]) => `<div class="metric"><span>${escapeHtml(name)}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
-  $("#pool-summary").innerHTML = summary(data.pool, { total: "总数", live: "可用", disabled: "停用", quotaDisabled: "额度停用", cooldown: "冷却", expired: "过期" });
+  $("#pool-summary").innerHTML = summary(data.pool, { total: "总数", live: "可用", banned: "OAuth 封禁", disabled: "停用", quotaDisabled: "额度停用", cooldown: "冷却", expired: "过期" });
   $("#usage-summary").innerHTML = summary(data.usage?.today || data.usage, { requests: "今日请求", success: "成功", fail: "失败", totalTokens: "今日 Token" });
   setConnection(data.direct_xai?.configured ? "已连接" : "缺少上游", data.direct_xai?.configured ? "ready" : "error");
 }
@@ -85,11 +145,15 @@ async function loadAccounts() {
   if (q) query.set("q", q);
   if (filter) query.set("status", filter);
   const data = await api(`/admin/api/accounts?${query}`);
-  $("#accounts-body").innerHTML = data.accounts.map((account) => `<tr>
+  $("#accounts-body").innerHTML = data.accounts.map((account) => { const accountStatus = accountState(account); const keepaliveStatus = keepaliveState(account); return `<tr>
     <td><strong>${escapeHtml(account.email || account.id)}</strong><br><small>${escapeHtml(account.id)}</small></td>
-    <td>${status(account.poolStatus)}</td><td>${account.weight}</td><td>${account.requestCount}</td><td>${date(account.expiresAt)}</td>
+    <td>${statusCell(accountStatus)}</td>
+    <td>${statusCell(keepaliveStatus)}${account.renewFailCount ? `<small class="failure-count">累计失败 ${account.renewFailCount} 次</small>` : ""}</td>
+    <td><strong>${account.requestCount}</strong><small class="cell-detail">成功 ${account.successCount} / 失败 ${account.failCount}</small></td>
+    <td><strong>${date(account.expiresAt)}</strong><small class="cell-detail ${account.expiresAt && account.expiresAt <= Date.now() ? "bad-text" : ""}">${escapeHtml(relativeExpiry(account.expiresAt))}</small></td>
+    <td>${date(account.lastUsedAt)}<small class="cell-detail">状态更新：${date(account.updatedAt)}</small></td>
     <td><div class="row-actions"><button type="button" data-account-toggle="${escapeHtml(account.id)}" data-enabled="${account.enabled}">${account.enabled ? "停用" : "启用"}</button></div></td>
-  </tr>`).join("") || `<tr><td colspan="6">没有匹配账号</td></tr>`;
+  </tr>`; }).join("") || `<tr><td colspan="7">没有匹配账号</td></tr>`;
   $("#account-pagination").innerHTML = `<button type="button" ${data.page <= 1 ? "disabled" : ""} id="page-prev">上一页</button><span>${data.page || 0} / ${data.totalPages || 0}，共 ${data.total || 0} 个</span><button type="button" ${data.page >= data.totalPages ? "disabled" : ""} id="page-next">下一页</button>`;
   $("#page-prev")?.addEventListener("click", () => { state.accountPage -= 1; void loadAccounts(); });
   $("#page-next")?.addEventListener("click", () => { state.accountPage += 1; void loadAccounts(); });
