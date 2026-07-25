@@ -10,8 +10,15 @@ ISSUER = "https://auth.x.ai"
 CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"
 DEFAULT_SCOPES = (
     "openid profile email offline_access grok-cli:access api:access "
-    "conversations:read conversations:write"
+    "conversations:read conversations:write workspaces:read workspaces:write"
 )
+
+
+def _grok_headers() -> dict[str, str]:
+    return {
+        "x-grok-client-version": os.environ.get("GROK2API_GROK_CLIENT_VERSION", "0.2.112").strip() or "0.2.112",
+        "x-grok-client-surface": "cli",
+    }
 
 
 def exchange_sso_for_token(
@@ -47,8 +54,8 @@ def exchange_sso_for_token(
         try:
             device = session.post(
                 f"{ISSUER}/oauth2/device/code",
-                data={"client_id": CLIENT_ID, "scope": scopes},
-                headers={"content-type": "application/x-www-form-urlencoded"},
+                data={"client_id": CLIENT_ID, "scope": scopes, "referrer": "grok-build"},
+                headers={"content-type": "application/x-www-form-urlencoded", **_grok_headers()},
                 timeout=timeout,
             )
             payload = _object_json(device)
@@ -119,7 +126,7 @@ def _poll_token(session: Any, device_code: str, *, interval: float, timeout: flo
                 "device_code": device_code,
                 "client_id": CLIENT_ID,
             },
-            headers={"content-type": "application/x-www-form-urlencoded"},
+            headers={"content-type": "application/x-www-form-urlencoded", **_grok_headers()},
             timeout=timeout,
         )
         payload = _object_json(response)

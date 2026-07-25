@@ -30,14 +30,17 @@ class _Session:
         self.cookies = _Cookies()
         self.fail_first_token = fail_first_token
         self.token_calls = 0
+        self.device_request: dict = {}
+        self.token_request: dict = {}
 
     def get(self, url: str, **_kwargs) -> _Response:
         if url == "https://accounts.x.ai/":
             return _Response(url)
         return _Response(url)
 
-    def post(self, url: str, **_kwargs) -> _Response:
+    def post(self, url: str, **kwargs) -> _Response:
         if url.endswith("/device/code"):
+            self.device_request = kwargs
             return _Response(url, {
                 "device_code": "device-secret",
                 "user_code": "AB-CD",
@@ -49,6 +52,7 @@ class _Session:
         if url.endswith("/device/approve"):
             return _Response("https://auth.x.ai/oauth2/device/done")
         if url.endswith("/oauth2/token"):
+            self.token_request = kwargs
             self.token_calls += 1
             if self.fail_first_token and self.token_calls == 1:
                 return _Response(url, {"error": "invalid_grant"}, ok=False)
@@ -63,6 +67,11 @@ class SsoDeviceFlowTests(unittest.TestCase):
         self.assertEqual(token["access_token"], "access-secret")
         self.assertIn(("sso", "sso-secret", ".x.ai"), session.cookies.values)
         self.assertIn(("sso-rw", "sso-secret", "accounts.x.ai"), session.cookies.values)
+        self.assertEqual(session.device_request["data"]["referrer"], "grok-build")
+        self.assertIn("workspaces:read", session.device_request["data"]["scope"])
+        self.assertEqual(session.device_request["headers"]["x-grok-client-surface"], "cli")
+        self.assertTrue(session.device_request["headers"]["x-grok-client-version"])
+        self.assertEqual(session.token_request["headers"]["x-grok-client-surface"], "cli")
 
     @patch("grok2api.upstream.sso_device_flow.time.sleep", return_value=None)
     def test_restarts_device_flow_after_propagation_invalid_grant(self, _sleep) -> None:

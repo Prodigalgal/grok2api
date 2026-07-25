@@ -48,6 +48,7 @@ test("authenticated browser SSO cookie is converted into a durable SQLite accoun
     oidcTokenUrl: "https://auth.example.test/token",
     oidcClientId: "test-client",
     oidcScopes: "openid offline_access",
+    grokClientVersion: "0.2.112",
   };
   const deviceLogins = new DeviceLoginService({ store, config, autoPoll: false, fetchImpl });
   const service = new SsoReauthService({ store, deviceLogins, config, fetchImpl });
@@ -84,6 +85,7 @@ test("protocol registration token is persisted without another Cloudflare reques
     oidcTokenUrl: "https://auth.example.test/token",
     oidcClientId: "test-client",
     oidcScopes: "openid offline_access",
+    grokClientVersion: "0.2.112",
   };
   const fetchImpl: typeof fetch = async () => { throw new Error("Cloudflare request must not run"); };
   const deviceLogins = new DeviceLoginService({ store, config, autoPoll: false, fetchImpl });
@@ -112,6 +114,7 @@ test("pending registration is durable and immediately queues automatic reauthori
     oidcTokenUrl: "https://auth.example.test/token",
     oidcClientId: "test-client",
     oidcScopes: "openid offline_access",
+    grokClientVersion: "0.2.112",
   };
   const deviceLogins = new DeviceLoginService({ store, config, autoPoll: false });
   const service = new SsoReauthService({ store, deviceLogins, config });
@@ -143,6 +146,7 @@ test("legacy protocol token restores an account without another Cloudflare reque
     oidcTokenUrl: "https://auth.example.test/token",
     oidcClientId: "test-client",
     oidcScopes: "openid offline_access",
+    grokClientVersion: "0.2.112",
   };
   const fetchImpl: typeof fetch = async () => { throw new Error("Cloudflare request must not run"); };
   const deviceLogins = new DeviceLoginService({ store, config, autoPoll: false, fetchImpl });

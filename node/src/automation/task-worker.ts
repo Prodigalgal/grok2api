@@ -60,45 +60,56 @@ export class AutomationTaskWorker {
         return;
       }
       tasks.markRunning(task.id, this.owner);
-      if (task.kind === "sso_reauth") {
-        await this.runSsoReauth(task.id, task.request);
-        return;
-      }
-      if (task.kind === "browser_automation" || task.kind === "registration" || task.kind === "sso_email_reauth") {
-        const controller = new AbortController();
-        this.active.set(task.id, controller);
-        try {
-          const runner = task.kind === "registration"
-            ? this.options.registrationRunner
-            : task.kind === "sso_email_reauth"
-              ? this.options.emailLoginRunner
-              : this.options.browserRunner;
-          if (!runner) {
-            throw new Error(task.kind === "sso_email_reauth"
-              ? "Cloudflare Temp Mail email login is not configured"
-              : "Cloudflare Temp Mail registration is not configured");
-          }
-          const result = await runner.run(task.request, {
-            signal: controller.signal,
-            onEvent: (event) => tasks.appendEvent(task.id, event.type, { ...event.detail, message: event.message }),
-          });
-          tasks.succeed(task.id, this.owner, result);
-        } catch (error) {
-          if (controller.signal.aborted) tasks.cancelRunning(task.id, this.owner);
-          else {
-            const reason = messageFor(error);
-            if (task.kind === "sso_email_reauth") {
-              const accountId = typeof task.request.accountId === "string" ? task.request.accountId : "";
-              if (accountId) this.options.store.markSsoReauthFailure(accountId, reason, this.options.config.ssoReauthCooldownMs);
-            }
-            tasks.fail(task.id, this.owner, reason);
-          }
-        } finally {
-          this.active.delete(task.id);
+      const heartbeat = setInterval(
+        () => tasks.renewLease(task.id, this.owner, this.options.config.workerLeaseMs),
+        Math.max(10, Math.min(30_000, Math.floor(this.options.config.workerLeaseMs / 3))),
+      );
+      heartbeat.unref();
+      try {
+        if (task.kind === "sso_reauth") {
+          await this.runSsoReauth(task.id, task.request);
+          return;
         }
-        return;
+        if (task.kind === "browser_automation" || task.kind === "registration" || task.kind === "sso_email_reauth") {
+          const controller = new AbortController();
+          this.active.set(task.id, controller);
+          try {
+            const runner = task.kind === "registration"
+              ? this.options.registrationRunner
+              : task.kind === "sso_email_reauth"
+                ? this.options.emailLoginRunner
+                : this.options.browserRunner;
+            if (!runner) {
+              throw new Error(task.kind === "sso_email_reauth"
+                ? "Cloudflare Temp Mail email login is not configured"
+                : "Cloudflare Temp Mail registration is not configured");
+            }
+            const result = await runner.run(task.request, {
+              signal: controller.signal,
+              onEvent: (event) => tasks.appendEvent(task.id, event.type, { ...event.detail, message: event.message }),
+            });
+            tasks.succeed(task.id, this.owner, result);
+          } catch (error) {
+            if (controller.signal.aborted) tasks.cancelRunning(task.id, this.owner);
+            else {
+              const reason = messageFor(error);
+              if (task.kind === "sso_email_reauth") {
+                const accountId = typeof task.request.accountId === "string" ? task.request.accountId : "";
+                if (accountId) this.options.store.markSsoReauthFailure(accountId, reason, this.options.config.ssoReauthCooldownMs);
+              }
+              tasks.fail(task.id, this.owner, reason);
+            }
+          } finally {
+            this.active.delete(task.id);
+          }
+          return;
+        }
+        tasks.fail(task.id, this.owner, `unsupported automation task kind: ${task.kind}`);
+      } finally {
+        clearInterval(heartbeat);
       }
-      tasks.fail(task.id, this.owner, `unsupported automation task kind: ${task.kind}`);
+    } catch (error) {
+      console.error(JSON.stringify({ event: "automation_worker_error", owner: this.owner, error: messageFor(error) }));
     } finally {
       this.running = false;
     }

@@ -50,3 +50,55 @@ test("failed saved SSO recovery succeeds after queuing independent email reautho
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("long registration work renews its lease until completion", async () => {
+  const { store, dir } = createStore();
+  try {
+    const task = store.automationTasks().enqueue("registration", "registration:lease-heartbeat", { count: 1, concurrency: 1 });
+    const worker = new AutomationTaskWorker({
+      store,
+      ssoReauth: { reauthenticate: async () => ({ accountId: "unused" }) },
+      browserRunner: { run: async () => ({}) },
+      registrationRunner: { run: async () => { await new Promise((resolve) => setTimeout(resolve, 140)); return { accountId: "account-1" }; } },
+      config: { workerLeaseMs: 60, ssoReauthCooldownMs: 3_600_000 },
+      owner: "registration-heartbeat-worker",
+      kinds: ["registration"],
+    });
+    const running = worker.runOnce();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(store.automationTasks().recoverExpired(), 0);
+    await running;
+    assert.equal(store.automationTasks().get(task.id)?.status, "succeeded");
+    assert.equal(store.automationTasks().get(task.id)?.attempts, 1);
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a lost task lease cannot crash the automation worker", async () => {
+  const { store, dir } = createStore();
+  try {
+    const task = store.automationTasks().enqueue("registration", "registration:lost-lease", { count: 1, concurrency: 1 });
+    let rejectRun: ((error: Error) => void) | undefined;
+    const worker = new AutomationTaskWorker({
+      store,
+      ssoReauth: { reauthenticate: async () => ({ accountId: "unused" }) },
+      browserRunner: { run: async () => ({}) },
+      registrationRunner: { run: () => new Promise((_, reject) => { rejectRun = reject; }) },
+      config: { workerLeaseMs: 10_000, ssoReauthCooldownMs: 3_600_000 },
+      owner: "lost-lease-worker",
+      kinds: ["registration"],
+    });
+
+    const running = worker.runOnce();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    store.automationTasks().cancelRunning(task.id, "lost-lease-worker");
+    rejectRun?.(new Error("runner completed after cancellation"));
+    await running;
+    assert.equal(store.automationTasks().get(task.id)?.status, "cancelled");
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

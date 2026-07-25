@@ -26,4 +26,6 @@ test("automation worker is enabled by default and can be disabled for a shadow r
   assert.equal(loadConfig({ GROK2API_REAUTH_WORKERS: "6" }).reauthWorkers, 6);
   assert.equal(loadConfig({}).registrationMaxConcurrency, 3);
   assert.equal(loadConfig({ GROK2API_REGISTRATION_MAX_CONCURRENCY: "5" }).registrationMaxConcurrency, 5);
+  assert.equal(loadConfig({}).grokClientVersion, "0.2.112");
+  assert.match(loadConfig({}).oidcScopes, /workspaces:read workspaces:write/);
 });

@@ -21,6 +21,7 @@ export interface AppConfig {
   readonly oidcDeviceUrl: string;
   readonly oidcClientId: string;
   readonly oidcScopes: string;
+  readonly grokClientVersion: string;
   readonly cfMailBaseUrl: string | null;
   readonly cfMailAdminPassword: string | null;
   readonly cfMailDomain: string | null;
@@ -117,7 +118,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     oidcTokenUrl: env.GROK2API_OIDC_TOKEN_URL?.trim() || "https://auth.x.ai/oauth2/token",
     oidcDeviceUrl: env.GROK2API_OIDC_DEVICE_URL?.trim() || "https://auth.x.ai/oauth2/device/code",
     oidcClientId: env.GROK2API_OIDC_CLIENT_ID?.trim() || "b1a00492-073a-47ea-816f-4c329264a828",
-    oidcScopes: env.GROK2API_OIDC_SCOPES?.trim() || "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write",
+    oidcScopes: env.GROK2API_OIDC_SCOPES?.trim() || "openid profile email offline_access grok-cli:access api:access conversations:read conversations:write workspaces:read workspaces:write",
+    grokClientVersion: env.GROK2API_GROK_CLIENT_VERSION?.trim() || "0.2.112",
     cfMailBaseUrl: env.GROK2API_CFMAIL_BASE_URL?.trim() || null,
     cfMailAdminPassword: env.GROK2API_CFMAIL_API_KEY?.trim() || null,
     cfMailDomain: env.GROK2API_CFMAIL_DOMAIN?.trim() || null,

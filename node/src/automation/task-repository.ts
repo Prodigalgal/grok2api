@@ -219,6 +219,15 @@ export class AutomationTaskRepository {
     return this.transition(id, owner, ["leased"], "running", now);
   }
 
+  renewLease(id: string, owner: string, leaseMs: number, now = Date.now()): boolean {
+    if (!owner.trim() || leaseMs <= 0) return false;
+    const result = this.db.prepare(`
+      UPDATE automation_tasks SET lease_expires_at = ?, updated_at = ?
+      WHERE id = ? AND lease_owner = ? AND status IN ('leased', 'running')
+    `).run(now + leaseMs, now, id, owner);
+    return result.changes === 1;
+  }
+
   waitForInput(id: string, owner: string, detail: Record<string, unknown>, now = Date.now()): AutomationTask {
     const task = this.transition(id, owner, ["running"], "waiting_input", now, detail, detail);
     this.db.prepare("UPDATE automation_tasks SET lease_owner = NULL, lease_expires_at = NULL WHERE id = ?").run(id);

@@ -6,7 +6,7 @@ import { DeviceLoginService } from "./device-login-service.js";
 export interface SsoReauthServiceOptions {
   readonly store: SqliteStore;
   readonly deviceLogins: DeviceLoginService;
-  readonly config: Pick<AppConfig, "oidcDeviceUrl" | "oidcTokenUrl" | "oidcClientId" | "oidcScopes">;
+  readonly config: Pick<AppConfig, "oidcDeviceUrl" | "oidcTokenUrl" | "oidcClientId" | "oidcScopes" | "grokClientVersion">;
   readonly fetchImpl?: typeof fetch;
   readonly pollTimeoutMs?: number;
 }
@@ -101,7 +101,8 @@ export class SsoReauthService {
     const device = await this.requestForm(this.options.config.oidcDeviceUrl, {
       client_id: this.options.config.oidcClientId,
       scope: this.options.config.oidcScopes,
-    }, cookies);
+      referrer: "grok-build",
+    }, cookies, true);
     const devicePayload = await objectJson(device, "device code response");
     const deviceCode = stringValue(devicePayload.device_code);
     const userCode = stringValue(devicePayload.user_code);
@@ -155,7 +156,7 @@ export class SsoReauthService {
         grant_type: "urn:ietf:params:oauth:grant-type:device_code",
         device_code: deviceCode,
         client_id: this.options.config.oidcClientId,
-      }, cookies);
+      }, cookies, true);
       const payload = await tryObjectJson(response);
       if (response.ok && stringValue(payload?.access_token)) {
         return payload!;
@@ -175,10 +176,16 @@ export class SsoReauthService {
     throw new Error("SSO recovery token exchange timed out");
   }
 
-  private async requestForm(url: string, form: Record<string, string>, cookies: CookieJar): Promise<Response> {
+  private async requestForm(url: string, form: Record<string, string>, cookies: CookieJar, grokHeaders = false): Promise<Response> {
     return this.request(url, {
       method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        ...(grokHeaders ? {
+          "x-grok-client-version": this.options.config.grokClientVersion,
+          "x-grok-client-surface": "cli",
+        } : {}),
+      },
       body: new URLSearchParams(form),
     }, cookies);
   }
