@@ -441,15 +441,34 @@ export function createApiServer(options: ApiServerOptions = {}): HealthServer {
     return reply.header("cache-control", "no-store").send({ ok: true, account: store.getAccountSummary(id) });
   });
 
+  const deleteAdminAccount = (store: SqliteStore, id: string, reply: FastifyReply) => {
+    if (!id || !store.getAccountSummary(id)) {
+      return reply.code(404).header("cache-control", "no-store").send({ detail: "account was not found" });
+    }
+    const tasks = store.automationTasks();
+    const cancelledTasks = tasks.cancelPendingForAccount(id);
+    const blockingTasks = tasks.listActiveForAccount(id);
+    if (blockingTasks.length > 0) {
+      return reply.code(409).header("cache-control", "no-store").send({
+        detail: "account has a running keepalive task; retry deletion after it finishes",
+        active_tasks: blockingTasks.map((task) => ({ id: task.id, status: task.status })),
+      });
+    }
+    return store.deleteAccount(id)
+      ? reply.header("cache-control", "no-store").send({ ok: true, account_id: id, cancelled_tasks: cancelledTasks })
+      : reply.code(404).header("cache-control", "no-store").send({ detail: "account was not found" });
+  };
+
   app.delete("/admin/api/accounts/:id", async (request, reply) => {
     const store = requireAdminStore(request, reply);
-    if (!store) {
-      return reply;
-    }
-    const id = (request.params as { id?: string }).id?.trim() || "";
-    return store.deleteAccount(id)
-      ? reply.header("cache-control", "no-store").send({ ok: true, account_id: id })
-      : reply.code(404).header("cache-control", "no-store").send({ detail: "account was not found" });
+    if (!store) return reply;
+    return deleteAdminAccount(store, (request.params as { id?: string }).id?.trim() || "", reply);
+  });
+
+  app.post("/admin/api/accounts/delete", async (request, reply) => {
+    const store = requireAdminStore(request, reply);
+    if (!store) return reply;
+    return deleteAdminAccount(store, stringField(requestBody(request), "id"), reply);
   });
 
   app.get("/admin/api/keys", async (request, reply) => {

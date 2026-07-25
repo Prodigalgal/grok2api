@@ -9,6 +9,7 @@ const state = {
   password: sessionStorage.getItem("grok2api-admin-password") || "",
   tab: initialTab,
   accountPage: 1,
+  accountProbeResults: {},
   registrationBatch: savedRegistrationBatch,
   registrationTimer: null,
   registrationLoading: false,
@@ -90,6 +91,8 @@ function localizedReason(value) {
   if (/account email was not found/i.test(reason)) return "临时邮箱服务中未找到该账号";
   if (/fetch failed|worker is unavailable/i.test(reason)) return "保活服务暂时不可用";
   if (/timed out|timeout/i.test(reason)) return "保活请求超时";
+  if (/account is not eligible for probing/i.test(reason)) return "账号缺少可用访问令牌，无法测活";
+  if (/running keepalive task/i.test(reason)) return "账号正在执行保活任务，请稍后再删除";
   return reason;
 }
 
@@ -145,14 +148,14 @@ async function loadAccounts() {
   if (q) query.set("q", q);
   if (filter) query.set("status", filter);
   const data = await api(`/admin/api/accounts?${query}`);
-  $("#accounts-body").innerHTML = data.accounts.map((account) => { const accountStatus = accountState(account); const keepaliveStatus = keepaliveState(account); return `<tr>
+  $("#accounts-body").innerHTML = data.accounts.map((account) => { const accountStatus = accountState(account); const keepaliveStatus = keepaliveState(account); const probe = state.accountProbeResults[account.id]; return `<tr>
     <td><strong>${escapeHtml(account.email || account.id)}</strong><br><small>${escapeHtml(account.id)}</small></td>
     <td>${statusCell(accountStatus)}</td>
     <td>${statusCell(keepaliveStatus)}${account.renewFailCount ? `<small class="failure-count">累计失败 ${account.renewFailCount} 次</small>` : ""}</td>
     <td><strong>${account.requestCount}</strong><small class="cell-detail">成功 ${account.successCount} / 失败 ${account.failCount}</small></td>
     <td><strong>${date(account.expiresAt)}</strong><small class="cell-detail ${account.expiresAt && account.expiresAt <= Date.now() ? "bad-text" : ""}">${escapeHtml(relativeExpiry(account.expiresAt))}</small></td>
     <td>${date(account.lastUsedAt)}<small class="cell-detail">状态更新：${date(account.updatedAt)}</small></td>
-    <td><div class="row-actions"><button type="button" data-account-toggle="${escapeHtml(account.id)}" data-enabled="${account.enabled}">${account.enabled ? "停用" : "启用"}</button></div></td>
+    <td><div class="row-actions"><button type="button" class="quiet" data-account-probe="${escapeHtml(account.id)}">测活</button><button type="button" data-account-toggle="${escapeHtml(account.id)}" data-enabled="${account.enabled}">${account.enabled ? "停用" : "启用"}</button><button type="button" class="danger" data-account-delete="${escapeHtml(account.id)}" data-account-name="${escapeHtml(account.email || account.id)}">删除</button></div>${probe ? `<small class="account-action-result ${probe.ok ? "good-text" : "bad-text"}">${escapeHtml(probe.message)}</small>` : ""}</td>
   </tr>`; }).join("") || `<tr><td colspan="7">没有匹配账号</td></tr>`;
   $("#account-pagination").innerHTML = `<button type="button" ${data.page <= 1 ? "disabled" : ""} id="page-prev">上一页</button><span>${data.page || 0} / ${data.totalPages || 0}，共 ${data.total || 0} 个</span><button type="button" ${data.page >= data.totalPages ? "disabled" : ""} id="page-next">下一页</button>`;
   $("#page-prev")?.addEventListener("click", () => { state.accountPage -= 1; void loadAccounts(); });
@@ -160,6 +163,29 @@ async function loadAccounts() {
   $$('[data-account-toggle]').forEach((button) => button.addEventListener("click", async () => {
     await api(`/admin/api/accounts/${encodeURIComponent(button.dataset.accountToggle)}/enabled`, { method: "PATCH", body: JSON.stringify({ enabled: button.dataset.enabled !== "true" }) });
     await loadAccounts();
+  }));
+  $$('[data-account-probe]').forEach((button) => button.addEventListener("click", async () => {
+    const id = button.dataset.accountProbe;
+    button.disabled = true;
+    button.textContent = "测活中…";
+    try {
+      await api("/admin/api/accounts/probe", { method: "POST", body: JSON.stringify({ id }) });
+      state.accountProbeResults[id] = { ok: true, message: "测活成功" };
+      setConnection("账号测活成功", "ready");
+    } catch (error) {
+      state.accountProbeResults[id] = { ok: false, message: `测活失败：${localizedReason(error.message)}` };
+      setConnection("账号测活失败", "error");
+    }
+    await loadAccounts();
+  }));
+  $$('[data-account-delete]').forEach((button) => button.addEventListener("click", () => {
+    const id = button.dataset.accountDelete;
+    const name = button.dataset.accountName;
+    dialog("删除账号", `<p class="confirmation-copy">确定删除账号 <strong>${escapeHtml(name)}</strong>？账号凭据、池状态和请求统计将永久删除，此操作无法撤销。</p>`, async () => {
+      const result = await api("/admin/api/accounts/delete", { method: "POST", body: JSON.stringify({ id }) });
+      delete state.accountProbeResults[id];
+      setConnection(result.cancelled_tasks ? `账号已删除，同时取消 ${result.cancelled_tasks} 个保活任务` : "账号已删除", "ready");
+    });
   }));
 }
 

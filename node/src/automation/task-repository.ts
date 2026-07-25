@@ -126,6 +126,30 @@ export class AutomationTaskRepository {
     return (rows as unknown as TaskRow[]).map(toTask);
   }
 
+  listActiveForAccount(accountId: string): AutomationTask[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM automation_tasks
+      WHERE json_extract(request_json, '$.accountId') = ?
+        AND status IN ('queued', 'leased', 'running', 'waiting_input')
+      ORDER BY created_at, id
+    `).all(accountId) as unknown as TaskRow[];
+    return rows.map(toTask);
+  }
+
+  cancelPendingForAccount(accountId: string, now = Date.now()): number {
+    let cancelled = 0;
+    for (const task of this.listActiveForAccount(accountId)) {
+      if (task.status !== "queued" && task.status !== "waiting_input") continue;
+      try {
+        this.cancelPending(task.id, now);
+        cancelled++;
+      } catch {
+        // A worker may claim the task between listing and cancellation.
+      }
+    }
+    return cancelled;
+  }
+
   cancelPending(id: string, now = Date.now()): AutomationTask {
     const task = this.get(id);
     if (!task) {

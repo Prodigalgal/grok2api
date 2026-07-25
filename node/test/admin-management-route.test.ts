@@ -20,9 +20,12 @@ test("SQLite admin management requires both credentials and exposes revealable A
   });
   store.recordRefreshFailure("account-1", "Refresh token has been revoked", true);
   store.markSsoReauthFailure("account-1", "saved SSO cookie is no longer valid", 3_600_000);
-  store.automationTasks().enqueue("sso_email_reauth", "account-1:reauth-status", { accountId: "account-1" });
+  const accountReauthTask = store.automationTasks().enqueue("sso_email_reauth", "account-1:reauth-status", { accountId: "account-1" });
   store.saveAccount({ id: "account-banned", email: "banned@example.test", payload: { access_token: "banned-private-token" } });
   store.markSsoReauthBanned("account-banned", "Access denied");
+  const deletedAccountId = "https://auth.x.ai::account-delete";
+  store.saveAccount({ id: deletedAccountId, email: "delete@example.test", payload: { access_token: "delete-private-token" } });
+  const deletedTask = store.automationTasks().enqueue("sso_email_reauth", "account-delete:reauth", { accountId: deletedAccountId });
   const server = createApiServer({
     adminStore: store,
     modelStore: store,
@@ -42,7 +45,7 @@ test("SQLite admin management requires both credentials and exposes revealable A
     assert.equal(status.status, 200);
     const statusBody = await status.json() as { store: { backend: string; redis: boolean; postgresql: boolean }; accounts: { account_count: number } };
     assert.deepEqual(statusBody.store, { backend: "sqlite", redis: false, postgresql: false });
-    assert.equal(statusBody.accounts.account_count, 2);
+    assert.equal(statusBody.accounts.account_count, 3);
 
     const accounts = await fetch(`http://127.0.0.1:${port}/admin/api/accounts?q=member`, { headers: adminHeaders });
     assert.equal(accounts.status, 200);
@@ -71,6 +74,29 @@ test("SQLite admin management requires both credentials and exposes revealable A
     });
     assert.equal(disabled.status, 200);
     assert.equal((await disabled.json() as { account: { enabled: boolean } }).account.enabled, false);
+
+    const deleted = await fetch(`http://127.0.0.1:${port}/admin/api/accounts/delete`, {
+      method: "POST",
+      headers: { ...adminHeaders, "content-type": "application/json" },
+      body: JSON.stringify({ id: deletedAccountId }),
+    });
+    assert.equal(deleted.status, 200);
+    assert.equal((await deleted.json() as { cancelled_tasks: number }).cancelled_tasks, 1);
+    assert.equal(store.getAccountSummary(deletedAccountId), null);
+    assert.equal(store.automationTasks().get(deletedTask.id)?.status, "cancelled");
+
+    store.automationTasks().cancelPending(accountReauthTask.id);
+    store.saveAccount({ id: "account-active-delete", email: "active-delete@example.test", payload: { access_token: "active-delete-token" } });
+    const activeDeleteTask = store.automationTasks().enqueue("sso_email_reauth", "active-delete:reauth", { accountId: "account-active-delete" });
+    store.automationTasks().claimNext("active-delete-worker", 60_000, Date.now(), ["sso_email_reauth"]);
+    store.automationTasks().markRunning(activeDeleteTask.id, "active-delete-worker");
+    const activeDelete = await fetch(`http://127.0.0.1:${port}/admin/api/accounts/delete`, {
+      method: "POST",
+      headers: { ...adminHeaders, "content-type": "application/json" },
+      body: JSON.stringify({ id: "account-active-delete" }),
+    });
+    assert.equal(activeDelete.status, 409);
+    assert.notEqual(store.getAccountSummary("account-active-delete"), null);
 
     const created = await fetch(`http://127.0.0.1:${port}/admin/api/keys`, {
       method: "POST",

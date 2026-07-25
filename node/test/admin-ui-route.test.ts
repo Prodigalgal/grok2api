@@ -26,6 +26,9 @@ test("Node admin page and static assets are served without exposing an API sessi
     const scriptText = await script.text();
     assert.match(scriptText, /grok2api-registration-batch/);
     assert.match(scriptText, /scheduleRegistrationRefresh/);
+    assert.match(scriptText, /data-account-probe/);
+    assert.match(scriptText, /data-account-delete/);
+    assert.match(scriptText, /\/admin\/api\/accounts\/delete/);
   } finally {
     await server.close();
   }

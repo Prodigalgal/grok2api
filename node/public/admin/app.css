@@ -165,12 +165,15 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .reauth-failures h3 { margin: 0 0 2px; color: #6c7971; font-size: 12px; font-weight: 500; }
 .reauth-failure { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; color: #7b4b4b; font-size: 12px; }
 .reauth-failure span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.accounts-table { min-width: 1160px; }
+.accounts-table { min-width: 1100px; }
 .toolbar .search { width: 320px; }
 .toolbar select { width: 180px; }
 .accounts-table td { vertical-align: top; }
 .accounts-table th:nth-child(1) { width: 24%; }
 .accounts-table th:nth-child(2), .accounts-table th:nth-child(3) { width: 17%; }
+.accounts-table th:last-child { width: 180px; }
+.accounts-table .row-actions { flex-wrap: nowrap; }
+.accounts-table .row-actions button { flex: 0 0 auto; white-space: nowrap; }
 .account-status { display: grid; justify-items: start; gap: 5px; min-width: 175px; }
 .account-status .status { padding: 2px 7px; border: 1px solid currentColor; border-radius: 4px; font-weight: 600; }
 .account-status small, .cell-detail, .failure-count { display: block; color: #748078; font-size: 11px; line-height: 1.45; }
@@ -178,3 +181,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .cell-detail { margin-top: 4px; }
 .failure-count { margin-top: 5px; color: #a05d23; }
 .bad-text { color: #ba4141; }
+.good-text { color: #16784a; }
+.account-action-result { display: block; margin-top: 6px; font-size: 11px; line-height: 1.4; text-align: right; }
+.confirmation-copy { margin: 0; color: #4e5d54; line-height: 1.65; }
+.confirmation-copy strong { color: #24382c; overflow-wrap: anywhere; }
