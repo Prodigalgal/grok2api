@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from grok2api.upstream.sso_device_flow import exchange_sso_for_token
+from grok2api.upstream.sso_device_flow import _response_error, exchange_sso_for_token
 
 
 class _Cookies:
@@ -79,6 +79,17 @@ class SsoDeviceFlowTests(unittest.TestCase):
         token = exchange_sso_for_token("sso-secret", session=session)
         self.assertEqual(token["access_token"], "access-secret")
         self.assertEqual(session.token_calls, 2)
+
+    def test_preserves_oauth_error_description(self) -> None:
+        response = _Response(
+            "https://auth.x.ai/oauth2/token",
+            {"error": "invalid_grant", "error_description": "authorization was rejected"},
+            ok=False,
+        )
+        self.assertEqual(
+            _response_error(response, response.json(), "device token rejected"),
+            "device token rejected: invalid_grant: authorization was rejected",
+        )
 
 
 if __name__ == "__main__":

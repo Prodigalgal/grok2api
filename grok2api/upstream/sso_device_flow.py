@@ -150,9 +150,13 @@ def _object_json(response: Any) -> dict[str, Any]:
 
 
 def _response_error(response: Any, payload: dict[str, Any], fallback: str) -> str:
-    error = str(payload.get("error") or payload.get("error_description") or "").strip()
+    error = str(payload.get("error") or "").strip()
+    description = str(payload.get("error_description") or "").strip()
     status = int(getattr(response, "status_code", 0) or 0)
-    return f"{fallback}: {error or f'HTTP {status}'}"
+    detail = error or f"HTTP {status}"
+    if description and description != error:
+        detail = f"{detail}: {description}"
+    return f"{fallback}: {detail[:500]}"
 
 
 def _retryable(message: str) -> bool:

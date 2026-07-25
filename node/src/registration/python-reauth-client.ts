@@ -3,6 +3,7 @@ export interface PythonReauthClientOptions {
   readonly token: string | null;
   readonly timeoutMs: number;
   readonly fetchImpl?: typeof fetch;
+  readonly readinessRetryMs?: number;
 }
 
 export interface PythonReauthResult {
@@ -18,6 +19,7 @@ export class PythonReauthClient {
   }
 
   async reauthenticate(email: string, password: string): Promise<PythonReauthResult> {
+    await this.waitUntilReady();
     const response = await this.fetchImpl(`${this.options.serviceUrl}/internal/registration/v1/reauth`, {
       method: "POST",
       headers: { accept: "application/json", "content-type": "application/json", ...(this.options.token ? { authorization: `Bearer ${this.options.token}` } : {}) },
@@ -40,4 +42,28 @@ export class PythonReauthClient {
     }
     return { sso, token };
   }
+
+  private async waitUntilReady(): Promise<void> {
+    const deadline = Date.now() + Math.min(this.options.timeoutMs, 300_000);
+    const retryMs = Math.max(1, this.options.readinessRetryMs ?? 2_000);
+    while (Date.now() < deadline) {
+      try {
+        const remaining = deadline - Date.now();
+        const response = await this.fetchImpl(`${this.options.serviceUrl}/health`, {
+          method: "GET",
+          headers: { accept: "application/json" },
+          signal: AbortSignal.timeout(Math.max(1, Math.min(5_000, remaining))),
+        });
+        if (response.ok) return;
+      } catch {
+        // The sidecar can still be pulling or restarting; retry until the bounded deadline.
+      }
+      await delay(Math.min(retryMs, Math.max(1, deadline - Date.now())));
+    }
+    throw new Error("legacy reauthentication worker is unavailable");
+  }
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
